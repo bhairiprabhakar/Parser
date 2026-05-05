@@ -63,8 +63,9 @@ def parse_store_and_location(name_str: str) -> tuple:
                 location = ""
             return doc_name, location
         else:
+            # 🚀 B5 FIX: Only split if there is a meaningful location after the name!
             parts = name_str.rsplit(' ', 1)
-            if len(parts) == 2 and len(parts[1]) >= 3:
+            if len(parts) == 2 and len(parts[1]) >= 4 and re.search(r'[A-Za-z]{3,}', parts[1]):
                 return parts[0].strip(), clean_loc(parts[1])
             return name_str.strip(), ""
 

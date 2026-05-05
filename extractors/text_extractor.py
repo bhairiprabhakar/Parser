@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 try:
     import pdfplumber
 except ImportError:
-    sys.exit("❌  pdfplumber not found.  Run:  pip install pdfplumber")
+    log.warning("❌  pdfplumber not found.  Run:  pip install pdfplumber")
 
 try:
     from pdfminer.high_level import extract_text as pdfminer_extract
@@ -39,13 +39,6 @@ try:
     _OCR_EXTRA_AVAILABLE = True
 except ImportError:
     _OCR_EXTRA_AVAILABLE = False
-
-if pd is None:
-    log.warning("⚠️  pandas not found. Excel (.xlsx) extraction will fail. Run: pip install pandas openpyxl")
-if not _FITZ_AVAILABLE:
-    log.warning("⚠️  PyMuPDF (fitz) not found. Fast-Regex Addon will fall back to standard text. Run: pip install PyMuPDF")
-if not _OCR_EXTRA_AVAILABLE:
-    log.warning("⚠️  Tesseract/OpenCV not found. Scanned PDFs will fail. Run: pip install pdf2image pytesseract opencv-python numpy")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -126,21 +119,35 @@ def _extract_spreadsheet_text(filepath: str) -> str:
         
     return "\n".join(text_lines)
 
+
+# 🚀 B7 FIX: Thread-safe PaddleOCR Engine Loader
+_PADDLE_ENGINE = None
+
+def _get_paddle():
+    global _PADDLE_ENGINE
+    if _PADDLE_ENGINE is None:
+        try:
+            # 🚀 FIX: Prevent silent Windows crashes from threading!
+            os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+            from paddleocr import PaddleOCR
+            import warnings
+            os.environ['FLAGS_enable_pir_api'] = '0'
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            
+            log.info("Initializing PaddleOCR Engine...")
+            _PADDLE_ENGINE = PaddleOCR(use_angle_cls=True, lang='en', enable_mkldnn=False)
+        except ImportError:
+            log.error("❌  paddleocr not found. Run: pip install paddlepaddle paddleocr")
+    return _PADDLE_ENGINE
+
+
 def _extract_image_text_paddle(filepath: str) -> str:
     try:
-        import os
-        # 🚀 ADD THIS LINE TO PREVENT WINDOWS CRASHES
-        os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE" 
-        
-        from paddleocr import PaddleOCR
-        import warnings
         from PIL import Image
         import tempfile
-        
-        os.environ['FLAGS_enable_pir_api'] = '0'
-        warnings.filterwarnings("ignore", category=DeprecationWarning)
     except ImportError:
-        sys.exit("❌  paddleocr or PIL not found. Run: pip install paddlepaddle paddleocr Pillow")
+        log.error("❌ PIL not found. Run: pip install Pillow")
+        return ""
 
     filepath_to_process = filepath
     temp_file_path = None
@@ -159,19 +166,13 @@ def _extract_image_text_paddle(filepath: str) -> str:
     except Exception as e:
         log.warning("Could not auto-resize image, proceeding with original. Error: %s", e)
 
-    global _PADDLE_ENGINE
-    if '_PADDLE_ENGINE' not in globals():
-        log.info("Initializing PaddleOCR Engine...")
-        _PADDLE_ENGINE = PaddleOCR(
-            use_angle_cls=True,  
-            lang='en', 
-            enable_mkldnn=False 
-        )
+    paddle_eng = _get_paddle()
+    if paddle_eng is None: return ""
 
     log.info("Running PaddleOCR on %s...", filepath_to_process)
     
     try:
-        result_gen = _PADDLE_ENGINE.predict(filepath_to_process)
+        result_gen = paddle_eng.predict(filepath_to_process)
         result = list(result_gen)
     except Exception as e:
         log.error("PaddleOCR failed to process the image: %s", e)

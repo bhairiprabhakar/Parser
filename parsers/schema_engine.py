@@ -7,16 +7,8 @@ just add synonyms to ROLE_SYNONYMS if a new column name appears.
 """
 
 import re
-
-# 🚀 INJECTED PHASE 3 NLP CLEANERS
-try:
-    from transformers.cleaners import clean_number
-    from transformers.entity_scrubber import parse_store_and_location
-except ImportError:
-    # Safe fallback if run completely standalone
-    def clean_number(v, is_int=False): return float(re.sub(r'[^\d.\-]', '', str(v)) or '0') if not is_int else int(float(re.sub(r'[^\d.\-]', '', str(v)) or '0'))
-    def parse_store_and_location(n): return n.strip(), ""
-
+from transformers.cleaners import clean_number
+from transformers.entity_scrubber import parse_store_and_location
 
 # ══════════════════════════════════════════════════════════════════════════
 #  SEMANTIC ROLE REGISTRY  — add synonyms here, never write a new parser
@@ -113,7 +105,6 @@ def parse_row_by_schema(data_line: str, schema: list) -> dict:
 
         numeric_roles = {'amount','qty','free','rate','taxable','tax','sur_tax','exempted','round_off','discount'}
         if role in numeric_roles:
-            # 🚀 UPGRADED to use the V1 math sanitizer
             result[role] = clean_number(raw)
         else:
             result[role] = raw
@@ -213,13 +204,21 @@ def parse_by_schema_inference(raw_text: str, source_file: str = '') -> dict:
     current_bill_no = ''
     skip_keywords = {'GRAND TOTAL', 'TOTAL :', 'TOTAL', 'NET TOTAL', 'PAGE TOTAL', '*** END', 'SUB TOTAL', 'PAGE SUB'}
 
+    HAS_DOSAGE = re.compile(r'\b\d+\s*(?:MG|ML|GM|MCG|TAB|CAP|INJ|SYP)\b', re.IGNORECASE)
+
     for line in lines[header_idx + 1:]:
         if not line.strip() or _is_separator(line): continue
         if any(kw in line.upper().strip() for kw in skip_keywords): continue
 
         if not has_store_col and has_item_col and not _is_data_row(line):
             s = line.strip()
-            if (len(s) >= 4 and not re.match(r'^\d{1,2}[-/]\d{1,2}', s) and not _is_header_line(s) and re.search(r'[A-Za-z]{3,}', s)):
+            # 🚀 RC2 FIX: Prevent Dosage strings from being parsed as Store Names
+            if (len(s) >= 4 
+                and not re.match(r'^\d{1,2}[-/]\d{1,2}', s) 
+                and not _is_header_line(s) 
+                and re.search(r'[A-Za-z]{3,}', s)
+                and not HAS_DOSAGE.search(s)):
+                
                 s = re.sub(r'(?i)^M/S\.?\s*', '', s).strip()
                 if s: current_store_name = s.upper()
             continue
@@ -236,7 +235,6 @@ def parse_by_schema_inference(raw_text: str, source_file: str = '') -> dict:
             if bill_no and bill_no != current_bill_no: current_bill_no = bill_no
             raw_store_name = current_store_name
 
-        # 🚀 UPGRADED to use the V1 Entity NLP Scrubber to remove PVT LTD / Brands!
         s_name, s_loc = parse_store_and_location(raw_store_name)
         if not s_loc and has_store_col:
             s_loc = str(row.get('location', ''))

@@ -12,22 +12,12 @@ try:
 except ImportError:
     pd = None
 
+# ── Clean absolute import from config.py ──
+from config import CSV_HEADERS
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  OUTPUT WRITERS & MATH RECONCILIATION
 # ══════════════════════════════════════════════════════════════════════════════
-
-CSV_HEADERS = [
-    'Agency Name', 'Agency Address', 'GSTIN',
-    'From Date', 'To Date', 'Company',
-    'Area', 'Store Name', 'Store Location', 'Description',
-    'Brand Name', 'Dosage', 'Packaging', 
-    'Qty', 'Free', 'Rate', 'Amount', 'Percent',
-    'Tax Amount', 'Discount Amount', 'Doc Type',
-    # ── FORMAT_27 Sales Book extra columns (blank for other formats) ──
-    'Bill Date', 'Bill No', 'Taxable', 'Tax', 'Sur Tax', 'Free Amt', 'Exempted', 'Round Off',
-    'Source File'
-]
-
 
 def _is_invoice_adjustment_row(desc: str, store_name: str = "") -> bool:
     text = f"{desc} {store_name}".lower()

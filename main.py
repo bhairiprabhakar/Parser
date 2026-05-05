@@ -61,7 +61,6 @@ def process_document(filepath: str, output_dir: str = ".") -> dict:
     log.info("⏱️ Extraction Time: %.2f seconds", time.time() - ext_t0)
 
     # Grab the expected grand total from raw text (Math Reconciliation Shield)
-    import re
     expected_grand_total = None
     for line in raw_text.split('\n'):
         if any(lbl in line.lower() for lbl in ['grand total', 'total value', 'net sales', 'value in rs', 'net amount', 'total:', 'total :', 'invoice value', 'net payable']) or re.search(r'(?i)^\s*[\d.,]+\s+total\s*$', line) or re.search(r'(?i)^\s*total\s+[\d.,]+\s*$', line):
@@ -78,6 +77,15 @@ def process_document(filepath: str, output_dir: str = ".") -> dict:
     parse_t0 = time.time()
     
     data = route_and_parse(raw_text, str(target_file))
+    
+    # NEW: schema-specific cleaning runs first [cite: 665]
+    if data.get("ReportDetails", {}).get("ParserMode") == "SCHEMA_INFERRED":
+        from transformers.schema_cleaner import clean_schema_output
+        data = clean_schema_output(data)
+
+    # existing post-process runs after (safe for both) [cite: 665]
+    data = post_process_extracted_data(data)
+    data = safe_clean_store_entities(data)
     
     rd = data["ReportDetails"]
     if rd.get("ParserMode") == "PAGED_STORE_INVOICE" and data.get("_grand_total", 0.0) > 0:

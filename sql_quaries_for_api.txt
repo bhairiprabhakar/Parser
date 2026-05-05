@@ -1,0 +1,64 @@
+uvicorn api:app --reload
+
+-- 1. Create the API Users Table
+CREATE TABLE api_users (
+    api_key VARCHAR(255) PRIMARY KEY,
+    customer_name VARCHAR(255) NOT NULL,
+    plan VARCHAR(50) NOT NULL, -- 'pay_as_you_go' or 'prepaid'
+    credits_remaining INT DEFAULT 0,
+    pages_processed_this_month INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. Insert a Test User
+INSERT INTO api_users (api_key, customer_name, plan, credits_remaining, pages_processed_this_month)
+VALUES 
+('live_sk_12345', 'Acme Pharmaceuticals', 'pay_as_you_go', 0, 0),
+('live_sk_67890', 'Global Meds', 'prepaid', 500, 0);
+
+---------------------------------------------------------------------------------
+
+CREATE TABLE api_requests_log (
+    log_id SERIAL PRIMARY KEY,
+    api_key VARCHAR(255) REFERENCES api_users(api_key),
+    endpoint_hit VARCHAR(100),
+    file_name VARCHAR(255),
+    pages_billed INT,
+    status_code INT,
+    processing_time_ms INT,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+--------------------------------------Retool----------------------------------------------
+
+Chart 1 (API Speed Over Time):
+Drag a "Line Chart" component.
+
+SQL
+-- Query: Watch your pipeline speed over the last 7 days
+SELECT DATE(created_at) as date, AVG(processing_time_ms) as avg_speed_ms 
+FROM api_requests_log 
+WHERE status_code = 200 
+GROUP BY DATE(created_at) ORDER BY date;
+Chart 2 (Error Rate Tracker):
+Drag a "Pie Chart" component.
+
+SQL
+-- Query: See exactly why requests are failing (401 vs 402 vs 500)
+SELECT status_code, COUNT(*) as count 
+FROM api_requests_log 
+GROUP BY status_code;
+The Master User Table:
+Drag a "Table" component.
+
+SQL
+-- Query: A live view of your paying customers
+SELECT customer_name, plan, pages_processed_this_month, credits_remaining 
+FROM api_users 
+ORDER BY pages_processed_this_month DESC;
+
+-------------------------
+
+Your Next Move:
+Test the API out a few times using Postman or /docs. Then, check your api_requests_log table in pgAdmin. You will see every single request logged with its processing time in milliseconds!

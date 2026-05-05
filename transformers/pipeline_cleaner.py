@@ -15,7 +15,9 @@ def _apply_strict_entity_cleaning(text: str, is_location: bool = False) -> str:
     cleaned = re.sub(r'\b\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}\b', ' ', cleaned)
     
     if is_location:
-        cleaned = re.sub(r'[^A-Z\s]', ' ', cleaned)
+        # 🚀 RC3 FIX: Keep digits and hyphens — needed for F-3, SEC 45
+        cleaned = re.sub(r'[^A-Z0-9\-\s]', ' ', cleaned)   
+        cleaned = re.sub(r'-{2,}', '-', cleaned)             
     else:
         cleaned = re.sub(r'[^A-Z0-9&\-\s]', ' ', cleaned)
         cleaned = re.sub(r'-{2,}', '-', cleaned)
@@ -102,7 +104,16 @@ def post_process_extracted_data(data: dict) -> dict:
 
     for area in data.get("Areas", []):
         for store in area.get("Stores", []):
-            s_name = store.get("StoreName", "")
+            
+            # 🚀 RC4 FIX: Prevent double location splitting if it already has one!
+            s_name, s_loc = store.get("StoreName", ""), store.get("StoreLocation", "")
+            if s_loc:
+                pass # Already split by schema engine
+            else:
+                s_name, s_loc = parse_store_and_location(s_name)
+                store["StoreName"] = s_name
+                store["StoreLocation"] = s_loc
+
             if s_name:
                 s_name = re.sub(r'^[A-Z0-9]+\s*-\s*', '', s_name)
                 s_name = re.sub(r'[\(\[\{<].*?[\)\]\}>]', ' ', s_name)

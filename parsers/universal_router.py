@@ -10,8 +10,22 @@ log = logging.getLogger(__name__)
 from transformers.cleaners import preprocess_line
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SIGNATURE DETECTION UTILITIES 
+#  SIGNATURE DETECTION UTILITIES & HEALERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _heal_marg_csv_artifacts(raw_text: str) -> str:
+    """Fixes Marg ERP's bug where CSV strings are printed onto PDFs, shattering rows vertically."""
+    if '",' in raw_text or ',"' in raw_text or ',,' in raw_text:
+        # 1. Pull up lines that start with or follow a comma/quote (handling \r\n safely)
+        raw_text = re.sub(r'\r?\n\s*(?=[,"])', ' ', raw_text)
+        raw_text = re.sub(r'(?<=[,"])\s*\r?\n', ' ', raw_text)
+        # 2. Strip the literal quotes
+        raw_text = raw_text.replace('"', ' ')
+        # 3. Collapse clustered commas
+        raw_text = re.sub(r',{2,}', ' ', raw_text)
+        # 4. Turn remaining single commas into spaces (EXCEPT inside numbers like 1,000.50)
+        raw_text = re.sub(r'(?<!\d),(?!\d)', ' ', raw_text)
+    return raw_text
 
 def _compact_signature(text: str) -> str:
     return re.sub(r'[^A-Z0-9]+', '', str(text).upper())
@@ -58,8 +72,18 @@ def _line_store_month_total_order(compact_lines: list, total_before_month: bool)
     return False
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  THE YAML ROUTER ENGINE
+#  THE YAML ROUTER ENGINE (CACHED)
 # ══════════════════════════════════════════════════════════════════════════════
+
+_YAML_CONFIGS = []
+_formats_dir = Path(__file__).parent.parent / "formats"
+if _formats_dir.exists():
+    for yf in sorted(_formats_dir.glob("*.yaml")):
+        try:
+            with open(yf, encoding='utf-8') as f:
+                _YAML_CONFIGS.append(yaml.safe_load(f))
+        except Exception as e:
+            log.warning("Failed to parse YAML %s: %s", yf.name, e)
 
 def detect_report_format(lines: list) -> dict:
     spaced, compact, compact_lines = _header_views(lines, max_lines=30)
@@ -67,59 +91,57 @@ def detect_report_format(lines: list) -> dict:
     def found(fmt: str, parser_mode: str, reason: str) -> dict:
         return {"Format": fmt, "ReportType": parser_mode, "Reason": reason}
 
-    # ── 1. Read YAML Configurations ──
-    formats_dir = Path(__file__).parent.parent / "formats"
-    if formats_dir.exists():
-        for yaml_file in formats_dir.glob("*.yaml"):
-            try:
-                with open(yaml_file, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f)
+    for config in _YAML_CONFIGS:
+        try:
+            req_all = config.get("fingerprint_keywords", {}).get("require_all", [])
+            req_any = config.get("fingerprint_keywords", {}).get("require_any", [])
+            exc_any = config.get("fingerprint_keywords", {}).get("exclude_any", [])
+            special = config.get("special_condition")
+            
+            if exc_any and any(_compact_signature(kw) in compact for kw in exc_any):
+                continue
+            
+            has_all = True
+            if req_all:
+                needles = [_compact_signature(phrase) for phrase in req_all]
+                has_all = any(all(needle in line for needle in needles) for line in compact_lines)
+            
+            has_any = True
+            if req_any:
+                has_any = any(_compact_signature(kw) in compact for kw in req_any)
+            
+            condition_met = True
+            if special == "check_agency_hint_in_header" and has_all:
+                no_ag = "NOTBETHERE" in compact or "WITHOUTAGENCY" in compact
+                has_ag = any(re.search(r'\b(AGENCY|AGENCIES|DISTRIBUTORS?|TRADERS?|PHARMA|MEDICALS?|GSTIN|DL\s*NO)\b', l, re.IGNORECASE) for l in lines[:10]) and not no_ag
+                fmt_id = "FORMAT_01" if has_ag else "FORMAT_02"
+                return found(fmt_id, config.get("report_type", "UNKNOWN"), "YAML: " + config.get('format_id', 'UNKNOWN'))
                 
-                req_all = config.get("fingerprint_keywords", {}).get("require_all", [])
-                req_any = config.get("fingerprint_keywords", {}).get("require_any", [])
-                exc_any = config.get("fingerprint_keywords", {}).get("exclude_any", [])
-                special = config.get("special_condition")
+            elif special == "line_order_amount_then_store":
+                condition_met = _line_order(compact_lines, "AMOUNT", "STORE NAME")
+            elif special == "store_month_total_order_false":
+                condition_met = _line_store_month_total_order(compact_lines, False)
+            elif special == "store_month_total_order_true":
+                condition_met = _line_store_month_total_order(compact_lines, True)
+            elif special == "has_quarter_or_months":
+                condition_met = _has_quarter_or_months(spaced)
+            elif special == "or_sales_book_alternative_layout":
+                alt_met = ("SALESBOOK" in compact or "SALES BOOK" in spaced) and (all(_compact_signature(k) in compact for k in ["BILLNO", "PARTYNAME"]) or all(_compact_signature(k) in compact for k in ["BILLAMT", "TAXABLE"]))
+                if not has_all and alt_met:
+                    return found(config["format_id"], config.get("report_type", "UNKNOWN"), "YAML alt-layout")
+
+            if has_all and has_any and condition_met:
+                report_type = config.get("report_type", "UNKNOWN")
                 
-                if exc_any and any(_compact_signature(kw) in compact for kw in exc_any):
-                    continue
-                
-                has_all = True
-                if req_all:
-                    needles = [_compact_signature(phrase) for phrase in req_all]
-                    has_all = any(all(needle in line for needle in needles) for line in compact_lines)
-                
-                has_any = True
-                if req_any:
-                    has_any = any(_compact_signature(kw) in compact for kw in req_any)
-                
-                condition_met = True
-                if special == "check_agency_hint_in_header" and has_all:
-                    no_ag = "NOTBETHERE" in compact or "WITHOUTAGENCY" in compact
-                    has_ag = any(re.search(r'\b(AGENCY|AGENCIES|DISTRIBUTORS?|TRADERS?|PHARMA|MEDICALS?|GSTIN|DL\s*NO)\b', l, re.IGNORECASE) for l in lines[:10]) and not no_ag
-                    fmt_id = "FORMAT_01" if has_ag else "FORMAT_02"
-                    return found(fmt_id, config["report_type"], "YAML: " + yaml_file.name)
+                # 🚀 FIX: Prevent FORMAT_18 from misclassifying Mfr/Customer reports as standard SUMMARY
+                if report_type == "SUMMARY" and any(k in spaced for k in ["MFR/CUSTOMER", "MFR CUSTOMER", "CUSTOMER WISE SALES SUMMARY"]):
+                    report_type = "MFR_CUSTOMER_SUMMARY"
                     
-                elif special == "line_order_amount_then_store":
-                    condition_met = _line_order(compact_lines, "AMOUNT", "STORE NAME")
-                elif special == "store_month_total_order_false":
-                    condition_met = _line_store_month_total_order(compact_lines, False)
-                elif special == "store_month_total_order_true":
-                    condition_met = _line_store_month_total_order(compact_lines, True)
-                elif special == "has_quarter_or_months":
-                    condition_met = _has_quarter_or_months(spaced)
-                elif special == "or_sales_book_alternative_layout":
-                    alt_met = ("SALESBOOK" in compact or "SALES BOOK" in spaced) and (all(_compact_signature(k) in compact for k in ["BILLNO", "PARTYNAME"]) or all(_compact_signature(k) in compact for k in ["BILLAMT", "TAXABLE"]))
-                    if not has_all and alt_met:
-                        return found(config["format_id"], config["report_type"], "YAML alt-layout: " + yaml_file.name)
+                return found(config.get("format_id", "UNKNOWN"), report_type, "YAML: " + config.get('format_id', 'UNKNOWN'))
+        except Exception as e:
+            log.warning("Failed to parse YAML Config: %s", e)
 
-                if has_all and has_any and condition_met:
-                    return found(config["format_id"], config["report_type"], "YAML: " + yaml_file.name)
-            except Exception as e:
-                log.warning("Failed to parse YAML %s: %s", yaml_file.name, e)
-
-    # ── 2. Fallback to Legacy Headers (VIP PRIORITY RESTORED) ──
     head_text_clean = spaced
-    
     if any(kw in head_text_clean for kw in ["QUARTERLY", "QTR", "Q1", "Q2", "Q3", "Q4", "AMT OCT", "AMT NOV", "AMT DEC"]) or \
        ("JAN" in head_text_clean and "FEB" in head_text_clean) or \
        ("APR" in head_text_clean and "MAY" in head_text_clean) or \
@@ -167,30 +189,19 @@ def detect_report_format(lines: list) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def route_and_parse(raw_text: str, source_file: str = "") -> dict:
-    """
-    Priority 1: The Battle-Tested Legacy Machine & YAML Rules
-    Priority 2: The Generic Schema Engine (ONLY if Priority 1 fails)
-    """
-    from parsers.legacy_machine import parse_text
-    data = parse_text(raw_text)
+    # 🚀 1. Heal the text before ANY routing or parsing happens!
+    raw_text = _heal_marg_csv_artifacts(raw_text)
     
-    # ── Check if your legacy rules successfully found items ──
-    item_count = sum(len(s.get("Items", [])) for a in data.get("Areas", []) for s in a.get("Stores", []))
+    fmt = detect_report_format(raw_text.split('\n'))
     
-    if item_count > 0:
-        return data
-        
-    # ── If legacy completely failed (0 items), ONLY THEN try the Schema Engine ──
-    log.warning("Legacy rules found 0 items. Falling back to Generic Schema Engine...")
-    try:
-        from parsers.schema_engine import parse_by_schema_inference
-        schema_data = parse_by_schema_inference(raw_text, source_file=source_file)
-        
-        schema_item_count = sum(len(s.get("Items", [])) for a in schema_data.get("Areas", []) for s in a.get("Stores", []))
-        if schema_item_count > 0:
-            return schema_data
+    if fmt["ReportType"] in ("SCHEMA_INFERRED", "UNIVERSAL_TWO_COLUMN"):
+        try:
+            from parsers.schema_engine import parse_by_schema_inference
+            data = parse_by_schema_inference(raw_text, source_file=source_file)
+            if sum(len(s.get("Items",[])) for a in data.get("Areas",[]) for s in a.get("Stores",[])) > 0:
+                return data
+        except Exception as e:
+            log.warning("Schema engine error: %s", e, exc_info=True)
             
-    except Exception as e:
-        log.warning("Schema engine encountered an error (%s).", e)
-
-    return data
+    from parsers.legacy_machine import parse_text
+    return parse_text(raw_text)

@@ -217,7 +217,7 @@ def parse_sales_book_register(raw_text: str, format_meta: dict = None) -> dict:
     data["Areas"].append(area)
 
     DATA_ROW = re.compile(
-        r'^(?P<date>\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(?P<bill_no>[A-Z]{2}\d{5,})\s+(?P<party>.+?)\s+'
+        r'^(?P<date>\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(?P<bill_no>[A-Z]{1,3}\d{4,})\s+(?P<party>.+?)\s+'
         r'(?P<bill_amt>-?\d[\d,]*\.\d{2})(?:\s+(?P<taxable>-?\d[\d,]*\.\d{2}))?(?:\s+(?P<tax>-?\d[\d,]*\.\d{2}))?'
         r'(?:\s+(?P<sur_tax>-?\d[\d,]*\.\d{2}))?(?:\s+(?P<free_amt>-?\d[\d,]*\.\d{2}))?(?:\s+(?P<exempted>-?\d[\d,]*\.\d{2}))?(?:\s+(?P<round_off>-?\d[\d,]*\.\d{2}))?\s*$',
         re.IGNORECASE
@@ -910,6 +910,9 @@ def parse_text(raw_text: str) -> dict:
     _grand_total = data.get("_grand_total", 0.0)
     if _grand_total == 0.0:
         for _gl in raw_text.split('\n'):
+            #Prevent page numbers from triggering the Phantom 1.0 Reconciliation Bug
+            if "page" in _gl.lower(): continue 
+            
             if any(lbl in _gl.lower() for lbl in ['grand total','total value','net sales','value in rs','net amount','total:','total :','invoice value','net payable']) or re.search(r'(?i)^\s*[\d.,]+\s+total\s*$', _gl) or re.search(r'(?i)^\s*total\s+[\d.,]+\s*$', _gl):
                 _nums = [clean_number(t) for t in _gl.split() if is_numeric_token(t)]
                 if _nums:
