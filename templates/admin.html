@@ -6,147 +6,361 @@
     <title>Marg ERP API | Admin Console</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .calc-height { height: calc(100vh - 64px); }
+    </style>
 </head>
-<body class="bg-gray-50 font-sans text-gray-800">
+<body class="bg-gray-50 font-sans text-gray-800 overflow-hidden">
 
-    <nav class="bg-slate-900 text-white p-4 shadow-md flex justify-between items-center">
-        <div class="text-xl font-bold tracking-wide">⚙️ API Admin Console</div>
-        <div class="text-sm">Welcome, <span class="font-bold text-blue-400">{{ admin_user }}</span> 
-            <a href="/logout" class="ml-4 text-gray-400 hover:text-white">Logout</a>
+    <nav class="bg-slate-900 text-white h-16 px-6 shadow-md flex justify-between items-center z-50 relative">
+        <div class="flex items-center gap-3">
+            <div class="bg-blue-600 p-2 rounded-lg">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            </div>
+            <div class="text-xl font-bold tracking-wide">Marg ERP API Hub</div>
+        </div>
+        <div class="text-sm flex items-center gap-4">
+            <span class="bg-slate-800 px-3 py-1 rounded-full border border-slate-700">Logged in as: <span class="font-bold text-blue-400">{{ admin_user }}</span></span>
+            <a href="/logout" class="text-gray-400 hover:text-white font-medium transition-colors">Logout &rarr;</a>
         </div>
     </nav>
 
-    <div class="max-w-7xl mx-auto p-6">
+    <div class="flex calc-height">
         
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
-                <h3 class="text-gray-500 text-sm font-semibold uppercase">Total Pages Billed</h3>
-                <p class="text-3xl font-bold text-slate-800 mt-2">{{ kpis.total_pages | default('0') }}</p>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
-                <h3 class="text-gray-500 text-sm font-semibold uppercase">Average Processing Time</h3>
-                <p class="text-3xl font-bold text-blue-600 mt-2">{{ kpis.avg_latency | default('0') }} ms</p>
-            </div>
-            <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
-                <h3 class="text-gray-500 text-sm font-semibold uppercase">Global Error Rate</h3>
-                <p class="text-3xl font-bold text-red-500 mt-2">{{ kpis.error_rate | default('0') }}%</p>
-            </div>
-        </div>
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10">
+            <div class="p-4 uppercase text-xs font-bold text-gray-400 tracking-wider mb-2">Main Menu</div>
+            <nav class="flex-1 flex flex-col gap-1 px-3">
+                <button onclick="switchTab('tab-overview', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg bg-blue-50 text-blue-700 font-semibold transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+                    Dashboard Overview
+                </button>
+                <button onclick="switchTab('tab-plans', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                    Company Plans
+                </button>
+                <button onclick="switchTab('tab-stats', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                    Parsing Stats
+                </button>
+                <button onclick="switchTab('tab-logs', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    Live Processing Log
+                </button>
+                <button onclick="switchTab('tab-errors', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-red-50 hover:text-red-600 font-medium transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    Recent Errors
+                </button>
+            </nav>
+        </aside>
 
-        <div class="bg-white rounded-lg shadow border border-gray-100 mb-8 overflow-hidden p-6">
-            <h2 class="font-bold text-lg text-slate-800 mb-4">📈 7-Day Usage Trends (Pages Billed)</h2>
-            <div class="w-full" style="height: 300px;">
-                <canvas id="usageChart"></canvas>
-            </div>
-        </div>
+        <main class="flex-1 overflow-y-auto bg-gray-50/50 p-8">
+            
+            <div id="tab-overview" class="tab-content block animate-fade-in">
+                <div class="mb-6 flex justify-between items-end">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-800">Dashboard Overview</h1>
+                        <p class="text-gray-500 mt-1">High-level telemetry and pipeline health.</p>
+                    </div>
+                </div>
 
-        <div class="bg-white rounded-lg shadow border border-gray-100 mb-8 overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                <h2 class="font-bold text-lg text-slate-800">🏢 Company Usage & Plans</h2>
-                <button onclick="document.getElementById('addCustomerModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">+ Add Customer</button>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+                        <div>
+                            <h3 class="text-gray-400 text-xs font-bold uppercase tracking-wider">Total Pages Billed</h3>
+                            <p class="text-3xl font-black text-slate-800 mt-1">{{ kpis.total_pages | default('0') }}</p>
+                        </div>
+                        <div class="bg-blue-50 p-3 rounded-full text-blue-600"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+                        <div>
+                            <h3 class="text-gray-400 text-xs font-bold uppercase tracking-wider">Avg Processing Time</h3>
+                            <p class="text-3xl font-black text-blue-600 mt-1">{{ kpis.avg_latency | default('0') }} <span class="text-lg font-medium text-gray-400">ms</span></p>
+                        </div>
+                        <div class="bg-indigo-50 p-3 rounded-full text-indigo-600"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+                        <div>
+                            <h3 class="text-gray-400 text-xs font-bold uppercase tracking-wider">Global Error Rate</h3>
+                            <p class="text-3xl font-black text-red-500 mt-1">{{ kpis.error_rate | default('0') }}%</p>
+                        </div>
+                        <div class="bg-red-50 p-3 rounded-full text-red-600"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg></div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden p-6">
+                    <h2 class="font-bold text-lg text-slate-800 mb-4">📈 7-Day Usage Trends (Pages Billed)</h2>
+                    <div class="w-full" style="height: 350px;">
+                        <canvas id="usageChart"></canvas>
+                    </div>
+                </div>
             </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left border-collapse">
-                    <thead>
-                        <tr class="bg-gray-50 text-gray-600 text-sm border-b">
-                            <th class="p-4">Customer Name</th>
-                            <th class="p-4">API Key</th>
-                            <th class="p-4">Plan Type</th>
-                            <th class="p-4">Usage This Month</th>
-                            <th class="p-4">Credits Left</th>
-                            <th class="p-4">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="text-sm">
-                        {% for u in users %}
-                        <tr class="border-b hover:bg-gray-50">
-                            <td class="p-4 font-medium">{{ u.customer_name }}</td>
-                            <td class="p-4"><code class="bg-gray-100 text-pink-600 px-2 py-1 rounded text-xs">{{ u.api_key }}</code></td>
-                            <td class="p-4">
-                                {% if u.plan == 'prepaid' %}
-                                    <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold uppercase">{{ u.plan }}</span>
+
+            <div id="tab-plans" class="tab-content hidden animate-fade-in">
+                <div class="mb-6 flex justify-between items-end">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-800">Company Usage & Plans</h1>
+                        <p class="text-gray-500 mt-1">Manage API keys, billing plans, and monthly quotas.</p>
+                    </div>
+                    <button onclick="document.getElementById('addCustomerModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-sm">+ Add New Customer</button>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b">
+                                    <th class="p-5 font-bold">Customer Name</th>
+                                    <th class="p-5 font-bold">API Key</th>
+                                    <th class="p-5 font-bold">Plan Type</th>
+                                    <th class="p-5 font-bold">Usage This Month</th>
+                                    <th class="p-5 font-bold">Credits Left</th>
+                                    <th class="p-5 font-bold text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-sm">
+                                {% for u in users %}
+                                <tr class="border-b border-gray-50 hover:bg-gray-50/80 transition-colors">
+                                    <td class="p-5 font-bold text-slate-700">{{ u.customer_name }}</td>
+                                    <td class="p-5"><code class="bg-gray-100 border border-gray-200 text-pink-600 px-2.5 py-1 rounded-md text-xs font-mono">{{ u.api_key }}</code></td>
+                                    <td class="p-5">
+                                        {% if u.plan == 'prepaid' %}
+                                            <span class="bg-green-100 text-green-700 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border border-green-200">{{ u.plan }}</span>
+                                        {% else %}
+                                            <span class="bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border border-blue-200">{{ u.plan }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="p-5 font-bold text-slate-700">{{ u.pages_processed_this_month }} <span class="text-gray-400 font-normal">pgs</span></td>
+                                    <td class="p-5 text-gray-600">{{ u.credits_remaining }} pgs</td>
+                                    <td class="p-5 text-right">
+                                        <a href="javascript:void(0)" onclick="openEditModal('{{ u.api_key }}', '{{ u.customer_name }}', '{{ u.plan }}', {{ u.credits_remaining }})" class="text-slate-400 hover:text-blue-600 font-medium mr-3 transition-colors">Edit</a>
+                                        <a href="javascript:void(0)" onclick="rollApiKey('{{ u.api_key }}')" class="text-slate-400 hover:text-red-600 font-medium transition-colors">Roll Key</a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-stats" class="tab-content hidden animate-fade-in">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-slate-800">Company-Wise Parsing Stats</h1>
+                    <p class="text-gray-500 mt-1">Lifetime aggregation of processed documents and extracted pages.</p>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b">
+                                    <th class="p-5 font-bold">Customer Name</th>
+                                    <th class="p-5 font-bold">Total Documents Parsed</th>
+                                    <th class="p-5 font-bold">Lifetime Pages Billed</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-sm">
+                                {% for stat in company_stats %}
+                                <tr class="border-b border-gray-50 hover:bg-gray-50/80">
+                                    <td class="p-5 font-bold text-slate-700">{{ stat.customer_name }}</td>
+                                    <td class="p-5">
+                                        <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-bold border border-purple-200">{{ stat.total_docs }} Docs</span>
+                                    </td>
+                                    <td class="p-5">
+                                        <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-xs font-bold border border-indigo-200">{{ stat.total_pages }} Pages</span>
+                                    </td>
+                                </tr>
                                 {% else %}
-                                    <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-bold uppercase">{{ u.plan }}</span>
-                                {% endif %}
-                            </td>
-                            <td class="p-4 font-bold">{{ u.pages_processed_this_month }} pgs</td>
-                            <td class="p-4">{{ u.credits_remaining }} pgs</td>
-                            <td class="p-4">
-                                <a href="#" class="text-blue-600 hover:underline mr-3">Edit</a>
-                                <a href="#" class="text-red-600 hover:underline">Revoke</a>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                                <tr><td colspan="3" class="p-10 text-center text-gray-400 font-medium">No parsing data available yet.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
-        </div>
 
-        <div class="bg-white rounded-lg shadow border border-gray-100 overflow-hidden">
-            <div class="px-6 py-4 border-b border-red-100 bg-red-50">
-                <h2 class="font-bold text-lg text-red-800">🚨 Recent Extraction Errors</h2>
-            </div>
-            <div class="p-0">
-                <table class="w-full text-left text-sm">
-                    <thead>
-                        <tr class="bg-gray-50 text-gray-600 border-b">
-                            <th class="p-4">Time</th>
-                            <th class="p-4">Status</th>
-                            <th class="p-4">File Name</th>
-                            <th class="p-4">Error Message</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for err in errors %}
-                        <tr class="border-b hover:bg-gray-50">
-                            <td class="p-4 text-gray-500">{{ err.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                            <td class="p-4"><span class="bg-red-100 text-red-800 px-2 py-1 rounded text-xs font-bold">{{ err.status_code }}</span></td>
-                            <td class="p-4">{{ err.file_name }}</td>
-                            <td class="p-4 text-red-600 font-mono text-xs">{{ err.error_message }}</td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="4" class="p-6 text-center text-gray-500">No recent errors. System is healthy! ✅</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+            <div id="tab-logs" class="tab-content hidden animate-fade-in">
+                <div class="mb-6 flex justify-between items-end">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-800">Live Processing Log</h1>
+                        <p class="text-gray-500 mt-1">Real-time feed of all incoming API requests and extractions.</p>
+                    </div>
+                    <button onclick="window.location.reload()" class="text-blue-600 hover:text-blue-800 font-medium text-sm flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        Refresh Feed
+                    </button>
+                </div>
 
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b">
+                                    <th class="p-5 font-bold">Timestamp</th>
+                                    <th class="p-5 font-bold">Customer Name</th>
+                                    <th class="p-5 font-bold">File Name</th>
+                                    <th class="p-5 font-bold text-center">Pages Extracted</th>
+                                    <th class="p-5 font-bold">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-sm">
+                                {% for log in file_logs %}
+                                <tr class="border-b border-gray-50 hover:bg-gray-50/80">
+                                    <td class="p-5 text-gray-400 font-medium whitespace-nowrap">{{ log.created_at.strftime('%b %d, %H:%M') }}</td>
+                                    <td class="p-5 font-bold text-slate-700">{{ log.customer_name }}</td>
+                                    <td class="p-5 text-blue-600 font-mono text-xs max-w-[200px] truncate" title="{{ log.file_name }}">{{ log.file_name }}</td>
+                                    <td class="p-5 font-bold text-slate-700 text-center">{{ log.pages_billed }}</td>
+                                    <td class="p-5">
+                                        {% if log.status_code == 200 %}
+                                            <span class="inline-flex items-center gap-1 text-green-600 font-bold text-xs"><span class="w-2 h-2 rounded-full bg-green-500"></span> Success</span>
+                                        {% else %}
+                                            <span class="inline-flex items-center gap-1 text-red-600 font-bold text-xs"><span class="w-2 h-2 rounded-full bg-red-500"></span> Failed</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="5" class="p-10 text-center text-gray-400 font-medium">No files processed yet.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-errors" class="tab-content hidden animate-fade-in">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-slate-800">Recent Extraction Errors</h1>
+                    <p class="text-gray-500 mt-1">Detailed error logs to help debug failing pipeline extractions.</p>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-red-100 overflow-hidden">
+                    <div class="px-6 py-4 border-b border-red-100 bg-red-50/50">
+                        <h2 class="font-bold text-red-800 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                            Error Telemetry
+                        </h2>
+                    </div>
+                    <div class="p-0">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="bg-gray-50/50 text-gray-500 text-xs uppercase tracking-wider border-b">
+                                    <th class="p-5 font-bold">Time</th>
+                                    <th class="p-5 font-bold">Code</th>
+                                    <th class="p-5 font-bold">File Name</th>
+                                    <th class="p-5 font-bold">Error Message Stack</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for err in errors %}
+                                <tr class="border-b border-gray-50 hover:bg-red-50/30 transition-colors">
+                                    <td class="p-5 text-gray-400 font-medium whitespace-nowrap">{{ err.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                    <td class="p-5"><span class="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold">{{ err.status_code }}</span></td>
+                                    <td class="p-5 text-gray-600 max-w-[150px] truncate" title="{{ err.file_name }}">{{ err.file_name }}</td>
+                                    <td class="p-5 text-red-600 font-mono text-xs break-all">{{ err.error_message }}</td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="4" class="p-12 text-center text-green-600 font-medium bg-green-50/30">
+                                        <div class="flex flex-col items-center justify-center">
+                                            <svg class="w-12 h-12 mb-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                            No recent errors. The system is completely healthy!
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </main>
     </div>
 
-    <div id="addCustomerModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden flex items-center justify-center">
-        <div class="bg-white rounded-lg shadow-xl w-96 p-6">
-            <h2 class="text-xl font-bold mb-4 text-slate-800">Add New Customer</h2>
+    <div id="addCustomerModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm hidden flex items-center justify-center z-[100] transition-all">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 transform scale-100">
+            <h2 class="text-2xl font-bold mb-6 text-slate-800">Add New Customer</h2>
             
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Company Name</label>
-                <input type="text" id="custName" class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. Acme Pharma">
+            <div class="mb-5">
+                <label class="block text-sm font-bold text-gray-700 mb-2">Company Name</label>
+                <input type="text" id="custName" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" placeholder="e.g. Acme Pharmaceuticals">
             </div>
 
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Billing Plan</label>
-                <select id="custPlan" class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" onchange="toggleCredits()">
-                    <option value="pay_as_you_go">Pay As You Go (Metered)</option>
-                    <option value="prepaid">Prepaid (Credit Pack)</option>
+            <div class="mb-5">
+                <label class="block text-sm font-bold text-gray-700 mb-2">Billing Plan</label>
+                <select id="custPlan" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-white" onchange="toggleAddCredits()">
+                    <option value="pay_as_you_go">Pay As You Go (Metered via Stripe)</option>
+                    <option value="prepaid">Prepaid (Volume Credit Pack)</option>
                 </select>
             </div>
 
-            <div class="mb-6 hidden" id="creditsDiv">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Starting Page Credits</label>
-                <input type="number" id="custCredits" class="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" value="0">
+            <div class="mb-8 hidden" id="creditsDiv">
+                <label class="block text-sm font-bold text-gray-700 mb-2">Starting Page Credits</label>
+                <input type="number" id="custCredits" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value="0">
+                <p class="text-xs text-gray-400 mt-1">Number of pages this customer can parse before being blocked.</p>
             </div>
 
-            <div class="flex justify-end gap-3">
-                <button onclick="document.getElementById('addCustomerModal').classList.add('hidden')" class="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded">Cancel</button>
-                <button onclick="submitNewCustomer()" class="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded">Generate API Key</button>
+            <div class="flex justify-end gap-3 mt-8">
+                <button onclick="document.getElementById('addCustomerModal').classList.add('hidden')" class="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 font-semibold rounded-lg transition-colors">Cancel</button>
+                <button onclick="submitNewCustomer()" class="px-5 py-2.5 bg-blue-600 text-white hover:bg-blue-700 font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                    Generate API Key
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="editCustomerModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm hidden flex items-center justify-center z-[100] transition-all">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 transform scale-100">
+            <h2 class="text-2xl font-bold mb-6 text-slate-800">Edit Customer</h2>
+            
+            <input type="hidden" id="editApiKey">
+
+            <div class="mb-5">
+                <label class="block text-sm font-bold text-gray-700 mb-2">Company Name</label>
+                <input type="text" id="editCustName" class="w-full border border-gray-200 bg-gray-50 text-gray-500 rounded-lg px-4 py-2.5 focus:outline-none" readonly>
+                <p class="text-xs text-gray-400 mt-1">Company names cannot be changed once created.</p>
+            </div>
+
+            <div class="mb-5">
+                <label class="block text-sm font-bold text-gray-700 mb-2">Billing Plan</label>
+                <select id="editCustPlan" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-white" onchange="toggleEditCredits()">
+                    <option value="pay_as_you_go">Pay As You Go (Metered via Stripe)</option>
+                    <option value="prepaid">Prepaid (Volume Credit Pack)</option>
+                </select>
+            </div>
+
+            <div class="mb-8" id="editCreditsDiv">
+                <label class="block text-sm font-bold text-gray-700 mb-2">Available Page Credits</label>
+                <input type="number" id="editCustCredits" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                <p class="text-xs text-gray-400 mt-1">Update the remaining credits for this customer.</p>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-8">
+                <button onclick="document.getElementById('editCustomerModal').classList.add('hidden')" class="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 font-semibold rounded-lg transition-colors">Cancel</button>
+                <button onclick="submitEditCustomer()" class="px-5 py-2.5 bg-blue-600 text-white hover:bg-blue-700 font-semibold rounded-lg shadow-sm transition-colors">
+                    Save Changes
+                </button>
             </div>
         </div>
     </div>
 
     <script>
-        // 1. Render the Chart.js Graph
+        // --- Tab Switching Logic ---
+        function switchTab(tabId, clickedBtn) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(tabId).classList.remove('hidden');
+
+            document.querySelectorAll('.sidebar-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-50', 'text-blue-700', 'font-semibold');
+                btn.classList.add('text-gray-600', 'hover:bg-gray-50', 'font-medium');
+            });
+
+            clickedBtn.classList.remove('text-gray-600', 'hover:bg-gray-50', 'font-medium');
+            clickedBtn.classList.add('bg-blue-50', 'text-blue-700', 'font-semibold');
+        }
+
+        // --- Chart.js Rendering ---
         const ctx = document.getElementById('usageChart').getContext('2d');
         const labels = {{ chart_labels | safe }};
         const dataValues = {{ chart_values | safe }};
@@ -158,30 +372,31 @@
                 datasets: [{
                     label: 'Pages Processed',
                     data: dataValues,
-                    borderColor: '#3b82f6', // Tailwind blue-500
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderColor: '#2563eb',
+                    backgroundColor: 'rgba(37, 99, 235, 0.1)',
                     borderWidth: 3,
                     fill: true,
-                    tension: 0.3,
-                    pointBackgroundColor: '#2563eb',
-                    pointRadius: 4
+                    tension: 0.4,
+                    pointBackgroundColor: '#1d4ed8',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 5,
+                    pointHoverRadius: 7
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
-                    x: { grid: { display: false } }
+                    y: { beginAtZero: true, grid: { color: '#f1f5f9', borderDash: [5, 5] }, ticks: { font: { family: 'Inter, sans-serif' }, color: '#64748b' } },
+                    x: { grid: { display: false }, ticks: { font: { family: 'Inter, sans-serif' }, color: '#64748b' } }
                 },
-                plugins: {
-                    legend: { display: false }
-                }
+                plugins: { legend: { display: false } }
             }
         });
 
-        // 2. Show/hide the credits box depending on the plan selected
-        function toggleCredits() {
+        // --- Add Customer Modal Logic ---
+        function toggleAddCredits() {
             const plan = document.getElementById('custPlan').value;
             const creditsDiv = document.getElementById('creditsDiv');
             if (plan === 'prepaid') {
@@ -191,7 +406,6 @@
             }
         }
 
-        // 3. Send the data to your FastAPI backend
         async function submitNewCustomer() {
             const name = document.getElementById('custName').value;
             const plan = document.getElementById('custPlan').value;
@@ -203,22 +417,86 @@
             }
 
             try {
-                // Because we are on the dashboard, the browser automatically sends our Basic Auth credentials!
                 const response = await fetch('/admin/customers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        customer_name: name,
-                        plan: plan,
-                        credits: credits
-                    })
+                    body: JSON.stringify({ customer_name: name, plan: plan, credits: credits })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert("Success! The new API key is: \n\n" + data.api_key + "\n\nPlease copy this securely.");
+                    window.location.reload(); 
+                } else {
+                    alert("Error: " + data.detail);
+                }
+            } catch (error) {
+                alert("Request failed: " + error);
+            }
+        }
+
+        // --- Edit Customer Modal Logic ---
+        function toggleEditCredits() {
+            const plan = document.getElementById('editCustPlan').value;
+            const creditsDiv = document.getElementById('editCreditsDiv');
+            if (plan === 'prepaid') {
+                creditsDiv.classList.remove('hidden');
+            } else {
+                creditsDiv.classList.add('hidden');
+            }
+        }
+
+        function openEditModal(apiKey, customerName, plan, credits) {
+            document.getElementById('editApiKey').value = apiKey;
+            document.getElementById('editCustName').value = customerName;
+            document.getElementById('editCustPlan').value = plan;
+            document.getElementById('editCustCredits').value = credits;
+            
+            toggleEditCredits();
+            document.getElementById('editCustomerModal').classList.remove('hidden');
+        }
+
+        async function submitEditCustomer() {
+            const apiKey = document.getElementById('editApiKey').value;
+            const plan = document.getElementById('editCustPlan').value;
+            const credits = parseInt(document.getElementById('editCustCredits').value) || 0;
+
+            try {
+                const response = await fetch('/admin/customers', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, plan: plan, credits: credits })
                 });
 
                 const data = await response.json();
-
                 if (response.ok) {
-                    alert("Success! The new API key is: \n\n" + data.api_key + "\n\nPlease copy this securely. It has been added to the database.");
-                    window.location.reload(); // Reload the page to show the new customer in the table!
+                    window.location.reload(); 
+                } else {
+                    alert("Error: " + data.detail);
+                }
+            } catch (error) {
+                alert("Request failed: " + error);
+            }
+        }
+
+        // --- 🚀 Roll / Regenerate API Key Logic ---
+        async function rollApiKey(oldApiKey) {
+            // Safety check so you don't accidentally break a customer's integration!
+            if (!confirm("⚠️ WARNING: Are you sure you want to roll this key?\n\nThis will INSTANTLY break the customer's current integration until they update their code with the new key.")) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/admin/customers/regenerate-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ old_api_key: oldApiKey })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert("✅ Success! The old key has been destroyed.\n\nThe NEW API key is:\n\n" + data.new_api_key + "\n\nPlease copy this and send it to the client immediately.");
+                    window.location.reload(); // Reload to see the new key in the table
                 } else {
                     alert("Error: " + data.detail);
                 }

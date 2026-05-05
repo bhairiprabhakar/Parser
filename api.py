@@ -46,6 +46,14 @@ class CustomerCreate(BaseModel):
     plan: str
     credits: int = 0
 
+class CustomerUpdate(BaseModel):
+    api_key: str
+    plan: str
+    credits: int
+
+class KeyRegenerateRequest(BaseModel):
+    old_api_key: str
+
 # 🚀 NEW: Stripe Keys (Get this from your Stripe Dashboard)
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_your_stripe_key_here")
 
@@ -248,7 +256,67 @@ async def add_new_customer(customer: CustomerCreate, current_admin: str = Depend
     finally:
         cursor.close()
         conn.close()
+
+@app.put("/admin/customers")
+async def edit_customer(customer: CustomerUpdate, current_admin: str = Depends(verify_admin)):
+    """Updates an existing customer's billing plan and credits in the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Update the user's plan and available credits based on their unique API key
+        cursor.execute("""
+            UPDATE api_users 
+            SET plan = %s, credits_remaining = %s
+            WHERE api_key = %s
+        """, (customer.plan, customer.credits, customer.api_key))
         
+        # Check if the API key actually existed
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Customer API Key not found.")
+            
+        conn.commit()
+        return {"status": "success", "message": "Customer updated successfully!"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+        
+@app.post("/admin/customers/regenerate-key")
+async def regenerate_api_key(request: KeyRegenerateRequest, current_admin: str = Depends(verify_admin)):
+    """Revokes an old API key and generates a new one, preserving historical stats."""
+    new_api_key = f"sk_live_{secrets.token_urlsafe(32)}"
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. Update the user's master record with the new key
+        cursor.execute("""
+            UPDATE api_users 
+            SET api_key = %s 
+            WHERE api_key = %s
+        """, (new_api_key, request.old_api_key))
+        
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Old API Key not found in database.")
+            
+        # 2. Update the telemetry logs so they don't lose their lifetime parsing stats!
+        cursor.execute("""
+            UPDATE api_requests_log 
+            SET api_key = %s 
+            WHERE api_key = %s
+        """, (new_api_key, request.old_api_key))
+        
+        conn.commit()
+        return {"status": "success", "message": "Key rolled successfully", "new_api_key": new_api_key}
+        
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
 # ══════════════════════════════════════════════════════════════════════════════
 #  ADMIN DASHBOARD & LOGOUT
 # ══════════════════════════════════════════════════════════════════════════════
@@ -258,9 +326,11 @@ async def view_admin_dashboard(request: Request, current_admin: str = Depends(ve
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        # 1. Fetch Users
         cursor.execute("SELECT * FROM api_users ORDER BY pages_processed_this_month DESC")
         users = cursor.fetchall()
         
+        # 2. Fetch Top-Level KPIs
         cursor.execute("SELECT SUM(pages_billed) as total_pages FROM api_requests_log")
         total_pages = cursor.fetchone()['total_pages'] or 0
 
@@ -274,16 +344,49 @@ async def view_admin_dashboard(request: Request, current_admin: str = Depends(ve
 
         kpis = {"total_pages": total_pages, "avg_latency": avg_latency, "error_rate": error_rate}
 
+        # 3. Fetch Recent Errors
         cursor.execute("SELECT created_at, status_code, file_name, error_message FROM api_requests_log WHERE status_code > 399 ORDER BY created_at DESC LIMIT 5")
         recent_errors = cursor.fetchall()
 
-        cursor.execute("SELECT DATE(created_at) as date, SUM(pages_billed) as daily_pages FROM api_requests_log WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' GROUP BY DATE(created_at) ORDER BY date ASC")
+        # 4. Fetch 7-Day Chart Analytics
+        cursor.execute("""
+            SELECT DATE(created_at) as date, SUM(pages_billed) as daily_pages 
+            FROM api_requests_log 
+            WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' 
+            GROUP BY DATE(created_at) ORDER BY date ASC
+        """)
         chart_data = cursor.fetchall()
+
+        # 🚀 NEW: 5. Company-Wise Aggregation (Total Docs & Pages)
+        cursor.execute("""
+            SELECT u.customer_name, COUNT(l.log_id) as total_docs, SUM(l.pages_billed) as total_pages 
+            FROM api_requests_log l 
+            JOIN api_users u ON l.api_key = u.api_key 
+            WHERE l.status_code = 200 
+            GROUP BY u.customer_name 
+            ORDER BY total_pages DESC
+        """)
+        company_stats = cursor.fetchall()
+
+        # 🚀 NEW: 6. Detailed File-Level Logs (File names + Page Counts)
+        cursor.execute("""
+            SELECT u.customer_name, l.file_name, l.pages_billed, l.created_at, l.status_code 
+            FROM api_requests_log l 
+            JOIN api_users u ON l.api_key = u.api_key 
+            ORDER BY l.created_at DESC 
+            LIMIT 20
+        """)
+        file_logs = cursor.fetchall()
         
         return templates.TemplateResponse(request=request, name="admin.html", context={
-            "admin_user": current_admin, "users": users, "kpis": kpis, "errors": recent_errors,
+            "admin_user": current_admin, 
+            "users": users, 
+            "kpis": kpis, 
+            "errors": recent_errors,
             "chart_labels": json.dumps([str(row['date']) for row in chart_data]),
-            "chart_values": json.dumps([row['daily_pages'] for row in chart_data])
+            "chart_values": json.dumps([row['daily_pages'] for row in chart_data]),
+            "company_stats": company_stats, # Passed to HTML
+            "file_logs": file_logs          # Passed to HTML
         })
     finally:
         cursor.close()
