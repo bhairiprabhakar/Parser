@@ -1,0 +1,5 @@
+format_id: "FORMAT_27_SALES_BOOK"
+report_type: "SALES_BOOK_REGISTER"
+fingerprint_keywords:
+  require_all: ["DATE", "BILL NO", "PARTY NAME", "BILL AMT"]
+special_condition: "or_sales_book_alternative_layout"

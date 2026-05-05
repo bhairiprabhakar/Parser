@@ -1,0 +1,4 @@
+format_id: "FORMAT_09"
+report_type: "SUMMARY"
+fingerprint_keywords:
+  require_all: ["QTY", "UNITS", "NETT SALE AMT", "AVG PRICE", "NO OF VCH"]

@@ -1,0 +1,24 @@
+# 📄 FORMAT 26: Paged Store Invoice
+# Mapped from Format_Based_1_0.py legacy detection rules
+format_id: "FORMAT_26_PAGED_STORE_INVOICE"
+report_type: "PAGED_STORE_INVOICE"
+
+# The script will only trigger this format if ALL of these exist in the header, 
+# PLUS at least one of the 'require_any' keywords.
+fingerprint_keywords:
+  require_all: 
+    - "SL"
+    - "ITEM DESCRIPTION"
+    - "PACK"
+    - "EXPIRY"
+    - "BATCH"
+    - "C/B"
+    - "QTY+FR"
+    - "MRP"
+    - "RATE"
+    - "GST"
+    - "AMOUNT"
+    - "HSNCODE"
+  require_any: 
+    - "INVOICENO"
+    - "M/S"

@@ -1,0 +1,5 @@
+format_id: "FORMAT_05"
+report_type: "SUMMARY"
+fingerprint_keywords:
+  require_all: ["STORE NAME", "AMOUNT"]
+  exclude_any: ["QTY", "PRICE", "FREE UNITS"]

@@ -1,0 +1,22 @@
+# ── Core PDF Extraction Engines ──
+pdfplumber>=0.10.3
+PyMuPDF>=1.23.8       # Provides the 'fitz' module
+pdfminer.six>=20221105
+
+# ── Spreadsheet & Data Handling ──
+pandas>=2.1.0
+openpyxl>=3.1.2       # Required by pandas for reading/writing .xlsx files
+
+# ── Image Processing & Heavy OCR (Scanned PDFs) ──
+pdf2image>=1.16.3
+pytesseract>=0.3.10
+opencv-python>=4.8.0
+numpy>=1.26.0
+Pillow>=10.0.0
+
+# ── AI OCR Engine (Standalone Images) ──
+paddlepaddle>=2.5.1   # CPU version (use paddlepaddle-gpu for CUDA)
+paddleocr>=2.7.0.3
+
+# ── Configuration & Routing ──
+PyYAML>=6.0.1         # Required for the Universal Router to read format .yaml files

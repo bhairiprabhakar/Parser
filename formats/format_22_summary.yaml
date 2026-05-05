@@ -1,0 +1,4 @@
+format_id: "FORMAT_22"
+report_type: "SUMMARY"
+fingerprint_keywords:
+  require_all: ["SL NO", "STORE NAME", "STORE LOCATION", "SALE-NET", "SAL-AMT"]

@@ -1,0 +1,4 @@
+format_id: "FORMAT_23_OR_24"
+report_type: "ITEM_WISE"
+fingerprint_keywords:
+  require_all: ["PRODUCT CODE", "PRODUCT NAME", "PACKING", "QTY", "VALUE"]

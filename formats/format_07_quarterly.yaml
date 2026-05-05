@@ -1,0 +1,3 @@
+format_id: "FORMAT_07"
+report_type: "QUARTERLY_SUMMARY"
+special_condition: "store_month_total_order_false"

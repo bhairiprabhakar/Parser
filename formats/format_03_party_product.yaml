@@ -1,0 +1,4 @@
+format_id: "FORMAT_03"
+report_type: "PARTY_PRODUCT_WISE"
+fingerprint_keywords:
+  require_all: ["SERIAL NO", "PRODUCT CODE", "BRAND NAME", "QTY", "PRICE", "FREE UNITS", "AMOUNT", "DISCOUNT"]

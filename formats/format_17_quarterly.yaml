@@ -1,0 +1,5 @@
+format_id: "FORMAT_17"
+report_type: "QUARTERLY_SUMMARY"
+fingerprint_keywords:
+  require_all: ["SL NO", "STORE NAME", "AREA"]
+special_condition: "has_quarter_or_months"

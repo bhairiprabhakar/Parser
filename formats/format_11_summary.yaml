@@ -1,0 +1,4 @@
+format_id: "FORMAT_11"
+report_type: "SUMMARY"
+fingerprint_keywords:
+  require_all: ["CODE", "STORENAME", "PLACE", "TOTAL"]

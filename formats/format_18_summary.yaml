@@ -1,0 +1,4 @@
+format_id: "FORMAT_18"
+report_type: "SUMMARY"
+fingerprint_keywords:
+  require_all: ["CUSTOMER NAME", "NET AMOUNT", "GOODS VALUE", "GST AMOUNT", "PRODDISC"]

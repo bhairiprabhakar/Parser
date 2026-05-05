@@ -1,0 +1,4 @@
+format_id: "FORMAT_10"
+report_type: "SUMMARY"
+fingerprint_keywords:
+  require_all: ["INVOICE NO", "INVOICE DATE", "STORENAME", "PLACE", "VALUE", "TOTAL"]

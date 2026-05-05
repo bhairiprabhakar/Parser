@@ -1,0 +1,4 @@
+format_id: "FORMAT_08"
+report_type: "UNIVERSAL_TWO_COLUMN"
+fingerprint_keywords:
+  require_all: ["BILL NO", "STORE NAME", "AMOUNT", "DISCOUNT", "NET AMT", "TAX PAYABLE", "DR/CR"]

@@ -1,0 +1,4 @@
+format_id: "FORMAT_15_OR_16"
+report_type: "MFR_CUSTOMER_SUMMARY"
+fingerprint_keywords:
+  require_all: ["GROUP/CUSTOMER", "QTY", "FREE", "GROSS VAL", "NET VALUE"]

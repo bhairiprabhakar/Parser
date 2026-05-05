@@ -1,0 +1,4 @@
+format_id: "FORMAT_19_OR_20"
+report_type: "PARTY_PRODUCT_WISE"
+fingerprint_keywords:
+  require_all: ["STORE NAME", "STORE LOCATION", "QTY", "FREE", "AMOUNT", "FREE AMOUNT", "PACKS", "BRANDDETAILS"]

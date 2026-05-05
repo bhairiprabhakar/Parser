@@ -1,0 +1,17 @@
+# 📄 FORMAT 14: Sale Register Itemized
+# Mapped from Format_Based_1_0.py legacy detection rules
+format_id: "FORMAT_14"
+report_type: "SALE_REGISTER_ITEMIZED"
+
+# The script will trigger this format if ALL of these columns are found
+fingerprint_keywords:
+  require_all: 
+    - "DATE"
+    - "BILLNO"
+    - "ITEM"
+    - "BATCH NO"
+    - "QTY"
+    - "FREE"
+    - "SALE PR"
+    - "AMOUNT"
+    - "EXP.DATE"

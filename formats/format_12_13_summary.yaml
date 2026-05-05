@@ -1,0 +1,4 @@
+format_id: "FORMAT_12_OR_13"
+report_type: "SUMMARY"
+fingerprint_keywords:
+  require_all: ["STORENAME", "STORE LOCATION", "SALES", "RETURN", "AMOUNT"]
