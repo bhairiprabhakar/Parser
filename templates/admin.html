@@ -208,7 +208,11 @@
                                 <tr class="border-b border-gray-50 hover:bg-gray-50/80">
                                     <td class="p-5 text-gray-400 font-medium whitespace-nowrap">{{ log.created_at.strftime('%b %d, %H:%M') }}</td>
                                     <td class="p-5 font-bold text-slate-700">{{ log.customer_name }}</td>
-                                    <td class="p-5 text-blue-600 font-mono text-xs max-w-[200px] truncate" title="{{ log.file_name }}">{{ log.file_name }}</td>
+                                    <td class="p-5 text-blue-600 font-mono text-xs max-w-[200px] truncate" title="{{ log.file_name }}">
+                                        <a href="/admin/files/{{ log.file_name }}" target="_blank" class="hover:underline text-blue-600">
+                                            {{ log.file_name }}
+                                        </a>
+                                    </td>
                                     <td class="p-5 font-bold text-slate-700 text-center">{{ log.pages_billed }}</td>
                                     <td class="p-5">
                                         {% if log.status_code == 200 %}
@@ -478,9 +482,8 @@
             }
         }
 
-        // --- 🚀 Roll / Regenerate API Key Logic ---
+        // --- Roll / Regenerate API Key Logic ---
         async function rollApiKey(oldApiKey) {
-            // Safety check so you don't accidentally break a customer's integration!
             if (!confirm("⚠️ WARNING: Are you sure you want to roll this key?\n\nThis will INSTANTLY break the customer's current integration until they update their code with the new key.")) {
                 return;
             }
@@ -496,7 +499,7 @@
                 
                 if (response.ok) {
                     alert("✅ Success! The old key has been destroyed.\n\nThe NEW API key is:\n\n" + data.new_api_key + "\n\nPlease copy this and send it to the client immediately.");
-                    window.location.reload(); // Reload to see the new key in the table
+                    window.location.reload(); 
                 } else {
                     alert("Error: " + data.detail);
                 }

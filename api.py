@@ -5,15 +5,16 @@ import time
 import math
 import json
 import secrets
+import uuid
 import fitz  # PyMuPDF
 import psycopg2
-import stripe  # 🚀 NEW: Stripe SDK
+import stripe
+from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, UploadFile, File, Header, HTTPException, BackgroundTasks, Request, Depends, status
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -40,7 +41,28 @@ DB_CONFIG = {
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "supersecretpassword"
 
-# Model for the incoming Add Customer request
+# Stripe Keys (Get this from your Stripe Dashboard)
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_your_stripe_key_here")
+
+# Initialize Rate Limiter (Tracks by IP address)
+limiter = Limiter(key_func=get_remote_address)
+
+app = FastAPI(title="Marg ERP Extraction API", version="1.0.0")
+
+# Register the rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+templates = Jinja2Templates(directory="templates")
+security = HTTPBasic()
+
+# Ensure the uploads directory exists for persistent storage
+os.makedirs("uploads", exist_ok=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
 class CustomerCreate(BaseModel):
     customer_name: str
     plan: str
@@ -54,23 +76,8 @@ class CustomerUpdate(BaseModel):
 class KeyRegenerateRequest(BaseModel):
     old_api_key: str
 
-# 🚀 NEW: Stripe Keys (Get this from your Stripe Dashboard)
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_your_stripe_key_here")
-
-# 🚀 NEW: Initialize Rate Limiter (Tracks by IP address)
-limiter = Limiter(key_func=get_remote_address)
-
-app = FastAPI(title="Marg ERP Extraction API", version="1.0.0")
-
-# Register the rate limiter with FastAPI
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-templates = Jinja2Templates(directory="templates")
-security = HTTPBasic()
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  HELPERS & BACKGROUND TASKS
+#  HELPERS & SECURITY
 # ══════════════════════════════════════════════════════════════════════════════
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
@@ -118,8 +125,6 @@ def calculate_billable_pages(filename: str, file_bytes: bytes) -> int:
     return 0
 
 def log_telemetry_and_bill_stripe(api_key: str, endpoint: str, file_name: str, pages: int, status_code: int, process_time: int, stripe_item_id: str, error: str = ""):
-    """Logs to Postgres AND pings Stripe to charge the customer."""
-    # 1. Log to PostgreSQL Database
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -134,33 +139,30 @@ def log_telemetry_and_bill_stripe(api_key: str, endpoint: str, file_name: str, p
         cursor.close()
         conn.close()
 
-    # 2. Charge via Stripe (Only if successful and using pay-as-you-go)
     if status_code == 200 and stripe_item_id and stripe_item_id.startswith("si_"):
         try:
             stripe.SubscriptionItem.create_usage_record(
-                stripe_item_id,
-                quantity=pages,
-                timestamp=int(time.time()),
-                action='increment',
+                stripe_item_id, quantity=pages, timestamp=int(time.time()), action='increment'
             )
         except Exception as e:
-            print(f"Stripe Billing Failed for {stripe_item_id}: {e}")
+            print(f"Stripe Billing Failed: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CORE EXTRACTION ENDPOINT 
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/v1/extract")
-@limiter.limit("20/minute") # 🚀 NEW: Security Rate Limit (Max 20 requests per minute)
+@limiter.limit("20/minute") 
 async def extract_document(
-    request: Request, # Required for limiter
+    request: Request, 
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     x_api_key: str = Header(...)
 ):
     start_time = time.time()
     page_count = 0
-    temp_filepath = None
+    unique_filename = f"{uuid.uuid4()}_{file.filename}"
+    file_path = os.path.join("uploads", unique_filename)
     
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -174,7 +176,6 @@ async def extract_document(
 
         file_bytes = await file.read()
         
-        # 🚀 NEW: Security Check - Block files larger than 15MB
         if len(file_bytes) > 15 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File too large. Maximum size is 15MB.")
 
@@ -185,13 +186,15 @@ async def extract_document(
         if user["plan"] == "prepaid" and user["credits_remaining"] < page_count:
             raise HTTPException(status_code=402, detail=f"Insufficient credits. Requires {page_count} pages.")
 
-        temp_filepath = f"temp_{file.filename}"
-        with open(temp_filepath, "wb") as f:
+        # Save File Permanently
+        with open(file_path, "wb") as f:
             f.write(file_bytes)
 
-        raw_text = extract_raw_text(temp_filepath)
+        # Run Extraction
+        raw_text = extract_raw_text(file_path)
         extracted_data = route_and_parse(raw_text, source_file=file.filename)
         
+        # Deduct Credits
         if user["plan"] == "prepaid":
             cursor.execute("UPDATE api_users SET credits_remaining = credits_remaining - %s WHERE api_key = %s", (page_count, x_api_key))
         else:
@@ -200,10 +203,10 @@ async def extract_document(
         conn.commit()
         process_time_ms = int((time.time() - start_time) * 1000)
 
-        # 🚀 Trigger God-Mode Telemetry & Stripe Billing
+        # Trigger God-Mode Telemetry & Stripe Billing (Log the unique filename!)
         background_tasks.add_task(
             log_telemetry_and_bill_stripe, 
-            x_api_key, "/api/v1/extract", file.filename, page_count, 200, process_time_ms, user.get("stripe_sub_item_id", "")
+            x_api_key, "/api/v1/extract", unique_filename, page_count, 200, process_time_ms, user.get("stripe_sub_item_id", "")
         )
 
         extracted_data["Billing"] = {
@@ -216,17 +219,15 @@ async def extract_document(
 
     except HTTPException as http_exc:
         process_time_ms = int((time.time() - start_time) * 1000)
-        background_tasks.add_task(log_telemetry_and_bill_stripe, x_api_key, "/api/v1/extract", file.filename, page_count, http_exc.status_code, process_time_ms, "", http_exc.detail)
+        background_tasks.add_task(log_telemetry_and_bill_stripe, x_api_key, "/api/v1/extract", unique_filename, page_count, http_exc.status_code, process_time_ms, "", http_exc.detail)
         raise
     except Exception as e:
         process_time_ms = int((time.time() - start_time) * 1000)
-        background_tasks.add_task(log_telemetry_and_bill_stripe, x_api_key, "/api/v1/extract", file.filename, page_count, 500, process_time_ms, "", str(e))
+        background_tasks.add_task(log_telemetry_and_bill_stripe, x_api_key, "/api/v1/extract", unique_filename, page_count, 500, process_time_ms, "", str(e))
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
     finally:
         cursor.close()
         conn.close()
-        if temp_filepath and os.path.exists(temp_filepath):
-            os.remove(temp_filepath)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  ADMIN ACTIONS (SECURED)
@@ -234,12 +235,8 @@ async def extract_document(
 
 @app.post("/admin/customers")
 async def add_new_customer(customer: CustomerCreate, current_admin: str = Depends(verify_admin)):
-    """Generates a secure API key and adds a new customer to the database."""
-    
-    # Generate a cryptographically secure 32-byte API Key
     raw_token = secrets.token_urlsafe(32)
     new_api_key = f"sk_live_{raw_token}"
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -248,77 +245,60 @@ async def add_new_customer(customer: CustomerCreate, current_admin: str = Depend
             VALUES (%s, %s, %s, %s, 0)
         """, (new_api_key, customer.customer_name, customer.plan, customer.credits))
         conn.commit()
-        
-        return {"status": "success", "message": "Customer created successfully!", "api_key": new_api_key}
+        return {"status": "success", "api_key": new_api_key}
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         cursor.close()
         conn.close()
 
 @app.put("/admin/customers")
 async def edit_customer(customer: CustomerUpdate, current_admin: str = Depends(verify_admin)):
-    """Updates an existing customer's billing plan and credits in the database."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # Update the user's plan and available credits based on their unique API key
-        cursor.execute("""
-            UPDATE api_users 
-            SET plan = %s, credits_remaining = %s
-            WHERE api_key = %s
-        """, (customer.plan, customer.credits, customer.api_key))
-        
-        # Check if the API key actually existed
+        cursor.execute("UPDATE api_users SET plan = %s, credits_remaining = %s WHERE api_key = %s", (customer.plan, customer.credits, customer.api_key))
         if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Customer API Key not found.")
-            
+            raise HTTPException(status_code=404, detail="Customer not found.")
         conn.commit()
-        return {"status": "success", "message": "Customer updated successfully!"}
+        return {"status": "success"}
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         cursor.close()
         conn.close()
-        
+
 @app.post("/admin/customers/regenerate-key")
 async def regenerate_api_key(request: KeyRegenerateRequest, current_admin: str = Depends(verify_admin)):
-    """Revokes an old API key and generates a new one, preserving historical stats."""
     new_api_key = f"sk_live_{secrets.token_urlsafe(32)}"
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. Update the user's master record with the new key
-        cursor.execute("""
-            UPDATE api_users 
-            SET api_key = %s 
-            WHERE api_key = %s
-        """, (new_api_key, request.old_api_key))
-        
+        cursor.execute("UPDATE api_users SET api_key = %s WHERE api_key = %s", (new_api_key, request.old_api_key))
         if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Old API Key not found in database.")
-            
-        # 2. Update the telemetry logs so they don't lose their lifetime parsing stats!
-        cursor.execute("""
-            UPDATE api_requests_log 
-            SET api_key = %s 
-            WHERE api_key = %s
-        """, (new_api_key, request.old_api_key))
-        
+            raise HTTPException(status_code=404, detail="Old API Key not found.")
+        cursor.execute("UPDATE api_requests_log SET api_key = %s WHERE api_key = %s", (new_api_key, request.old_api_key))
         conn.commit()
-        return {"status": "success", "message": "Key rolled successfully", "new_api_key": new_api_key}
-        
+        return {"status": "success", "new_api_key": new_api_key}
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         cursor.close()
         conn.close()
+
+@app.get("/admin/files/{filename}")
+async def get_uploaded_file(filename: str, current_admin: str = Depends(verify_admin)):
+    """Serves the uploaded file securely to the Admin."""
+    file_path = os.path.join("uploads", filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on server.")
+    return FileResponse(file_path)
+
 # ══════════════════════════════════════════════════════════════════════════════
-#  ADMIN DASHBOARD & LOGOUT
+#  DASHBOARD ROUTE
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -326,11 +306,9 @@ async def view_admin_dashboard(request: Request, current_admin: str = Depends(ve
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # 1. Fetch Users
         cursor.execute("SELECT * FROM api_users ORDER BY pages_processed_this_month DESC")
         users = cursor.fetchall()
         
-        # 2. Fetch Top-Level KPIs
         cursor.execute("SELECT SUM(pages_billed) as total_pages FROM api_requests_log")
         total_pages = cursor.fetchone()['total_pages'] or 0
 
@@ -341,52 +319,33 @@ async def view_admin_dashboard(request: Request, current_admin: str = Depends(ve
         cursor.execute("SELECT COUNT(*) as total_reqs, SUM(CASE WHEN status_code > 399 THEN 1 ELSE 0 END) as total_errors FROM api_requests_log")
         error_stats = cursor.fetchone()
         error_rate = round((error_stats['total_errors'] / error_stats['total_reqs']) * 100, 2) if error_stats and error_stats['total_reqs'] > 0 else 0
-
         kpis = {"total_pages": total_pages, "avg_latency": avg_latency, "error_rate": error_rate}
 
-        # 3. Fetch Recent Errors
         cursor.execute("SELECT created_at, status_code, file_name, error_message FROM api_requests_log WHERE status_code > 399 ORDER BY created_at DESC LIMIT 5")
         recent_errors = cursor.fetchall()
 
-        # 4. Fetch 7-Day Chart Analytics
-        cursor.execute("""
-            SELECT DATE(created_at) as date, SUM(pages_billed) as daily_pages 
-            FROM api_requests_log 
-            WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' 
-            GROUP BY DATE(created_at) ORDER BY date ASC
-        """)
+        cursor.execute("SELECT DATE(created_at) as date, SUM(pages_billed) as daily_pages FROM api_requests_log WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' GROUP BY DATE(created_at) ORDER BY date ASC")
         chart_data = cursor.fetchall()
 
-        # 🚀 NEW: 5. Company-Wise Aggregation (Total Docs & Pages)
         cursor.execute("""
             SELECT u.customer_name, COUNT(l.log_id) as total_docs, SUM(l.pages_billed) as total_pages 
-            FROM api_requests_log l 
-            JOIN api_users u ON l.api_key = u.api_key 
-            WHERE l.status_code = 200 
-            GROUP BY u.customer_name 
-            ORDER BY total_pages DESC
+            FROM api_requests_log l JOIN api_users u ON l.api_key = u.api_key 
+            WHERE l.status_code = 200 GROUP BY u.customer_name ORDER BY total_pages DESC
         """)
         company_stats = cursor.fetchall()
 
-        # 🚀 NEW: 6. Detailed File-Level Logs (File names + Page Counts)
         cursor.execute("""
             SELECT u.customer_name, l.file_name, l.pages_billed, l.created_at, l.status_code 
-            FROM api_requests_log l 
-            JOIN api_users u ON l.api_key = u.api_key 
-            ORDER BY l.created_at DESC 
-            LIMIT 20
+            FROM api_requests_log l JOIN api_users u ON l.api_key = u.api_key 
+            ORDER BY l.created_at DESC LIMIT 20
         """)
         file_logs = cursor.fetchall()
         
         return templates.TemplateResponse(request=request, name="admin.html", context={
-            "admin_user": current_admin, 
-            "users": users, 
-            "kpis": kpis, 
-            "errors": recent_errors,
+            "admin_user": current_admin, "users": users, "kpis": kpis, "errors": recent_errors,
             "chart_labels": json.dumps([str(row['date']) for row in chart_data]),
             "chart_values": json.dumps([row['daily_pages'] for row in chart_data]),
-            "company_stats": company_stats, # Passed to HTML
-            "file_logs": file_logs          # Passed to HTML
+            "company_stats": company_stats, "file_logs": file_logs
         })
     finally:
         cursor.close()
