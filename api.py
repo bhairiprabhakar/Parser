@@ -6,15 +6,16 @@ import math
 import json
 import secrets
 import uuid
-import fitz  # PyMuPDF
+import shutil
 import psycopg2
-import stripe
+from datetime import datetime
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, UploadFile, File, Header, HTTPException, BackgroundTasks, Request, Depends, status
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi import FastAPI, UploadFile, File, Header, HTTPException, BackgroundTasks, Request, Depends, status, Form
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -26,10 +27,10 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from parsers.universal_router import route_and_parse
 from extractors.text_extractor import extract_raw_text
+from parsers.universal_router import route_and_parse
 
-# ── CONFIGURATION ──
+# ── CONFIGURATION & DIRECTORIES ──
 DB_CONFIG = {
     "dbname": "VSPB",
     "user": "postgres",
@@ -41,23 +42,29 @@ DB_CONFIG = {
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "supersecretpassword"
 
-# Stripe Keys (Get this from your Stripe Dashboard)
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_your_stripe_key_here")
+# 🚀 NEW: Quarantine Vault Directory
+QUARANTINE_DIR = "quarantine_vault"
+os.makedirs(QUARANTINE_DIR, exist_ok=True)
 
-# Initialize Rate Limiter (Tracks by IP address)
+# Initialize Rate Limiter
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI(title="Marg ERP Extraction API", version="1.0.0")
+app = FastAPI(title="Extraction API", version="1.0.0")
 
-# Register the rate limiter
+# 🚀 CORS Middleware for Public SaaS APIs
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],  
+    allow_headers=["*"],  
+)
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 templates = Jinja2Templates(directory="templates")
 security = HTTPBasic()
-
-# Ensure the uploads directory exists for persistent storage
-os.makedirs("uploads", exist_ok=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  MODELS
@@ -101,13 +108,14 @@ def get_db_connection():
 def calculate_billable_pages(filename: str, file_bytes: bytes) -> int:
     ext = filename.lower().split('.')[-1]
     if ext == 'pdf':
+        import fitz
         try:
             doc = fitz.open(stream=file_bytes, filetype="pdf")
             return max(1, len(doc))
         except Exception:
             return 0
     elif ext in ['jpg', 'jpeg', 'png', 'bmp']:
-        return 1
+        return 3 
     elif ext == 'csv':
         try:
             lines = file_bytes.decode('utf-8', errors='ignore').strip().count('\n') + 1
@@ -124,14 +132,14 @@ def calculate_billable_pages(filename: str, file_bytes: bytes) -> int:
             return 1
     return 0
 
-def log_telemetry_and_bill_stripe(api_key: str, endpoint: str, file_name: str, pages: int, status_code: int, process_time: int, stripe_item_id: str, error: str = ""):
+def log_api_request_to_db(api_key: str, endpoint: str, file_name: str, file_url: str, pages: int, status_code: int, process_time: int, file_size_bytes: int = 0, error: str = "", quarantine_path: str = None):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT INTO api_requests_log (api_key, endpoint_hit, file_name, pages_billed, status_code, processing_time_ms, error_message)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (api_key, endpoint, file_name, pages, status_code, process_time, error))
+            INSERT INTO api_requests_log (api_key, endpoint_hit, file_name, file_url, pages_billed, status_code, processing_time_ms, file_size_bytes, error_message, quarantine_path)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (api_key, endpoint, file_name, file_url, pages, status_code, process_time, file_size_bytes, error, quarantine_path))
         conn.commit()
     except Exception as e:
         print(f"DB Log Failed: {e}")
@@ -139,13 +147,22 @@ def log_telemetry_and_bill_stripe(api_key: str, endpoint: str, file_name: str, p
         cursor.close()
         conn.close()
 
-    if status_code == 200 and stripe_item_id and stripe_item_id.startswith("si_"):
-        try:
-            stripe.SubscriptionItem.create_usage_record(
-                stripe_item_id, quantity=pages, timestamp=int(time.time()), action='increment'
-            )
-        except Exception as e:
-            print(f"Stripe Billing Failed: {e}")
+# 🚀 NEW: Auto-Delete 72-Hour Janitor
+def clean_quarantine_vault():
+    """Deletes any quarantined files older than 72 hours to ensure privacy compliance."""
+    if not os.path.exists(QUARANTINE_DIR):
+        return
+        
+    now = time.time()
+    for filename in os.listdir(QUARANTINE_DIR):
+        filepath = os.path.join(QUARANTINE_DIR, filename)
+        if os.path.isfile(filepath):
+            file_age_hours = (now - os.path.getctime(filepath)) / 3600
+            if file_age_hours > 72:
+                try:
+                    os.remove(filepath)
+                except Exception:
+                    pass
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CORE EXTRACTION ENDPOINT 
@@ -161,22 +178,27 @@ async def extract_document(
 ):
     start_time = time.time()
     page_count = 0
-    unique_filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join("uploads", unique_filename)
+    file_size_bytes = 0
+    drive_link = "Local Processing Only" 
+    temp_filepath = None
+    quarantine_path = None
     
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Trigger the 72-hour cleanup janitor in the background
+    background_tasks.add_task(clean_quarantine_vault)
 
     try:
         cursor.execute("SELECT * FROM api_users WHERE api_key = %s", (x_api_key,))
         user = cursor.fetchone()
-        
         if not user:
             raise HTTPException(status_code=401, detail="Invalid API Key")
 
         file_bytes = await file.read()
+        file_size_bytes = len(file_bytes)
         
-        if len(file_bytes) > 15 * 1024 * 1024:
+        if file_size_bytes > 15 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File too large. Maximum size is 15MB.")
 
         page_count = calculate_billable_pages(file.filename, file_bytes)
@@ -186,64 +208,138 @@ async def extract_document(
         if user["plan"] == "prepaid" and user["credits_remaining"] < page_count:
             raise HTTPException(status_code=402, detail=f"Insufficient credits. Requires {page_count} pages.")
 
-        # Save File Permanently
-        with open(file_path, "wb") as f:
+        temp_filepath = f"temp_{uuid.uuid4()}_{file.filename}"
+        with open(temp_filepath, "wb") as f:
             f.write(file_bytes)
 
-        # Run Extraction
-        raw_text = extract_raw_text(file_path)
+        raw_text = extract_raw_text(temp_filepath)
         extracted_data = route_and_parse(raw_text, source_file=file.filename)
         
-        # Deduct Credits
         if user["plan"] == "prepaid":
-            cursor.execute("UPDATE api_users SET credits_remaining = credits_remaining - %s WHERE api_key = %s", (page_count, x_api_key))
+            cursor.execute("""
+                UPDATE api_users 
+                SET credits_remaining = credits_remaining - %s, 
+                    pages_processed_this_month = pages_processed_this_month + %s 
+                WHERE api_key = %s
+            """, (page_count, page_count, x_api_key))
         else:
-            cursor.execute("UPDATE api_users SET pages_processed_this_month = pages_processed_this_month + %s WHERE api_key = %s", (page_count, x_api_key))
+            cursor.execute("""
+                UPDATE api_users 
+                SET pages_processed_this_month = pages_processed_this_month + %s 
+                WHERE api_key = %s
+            """, (page_count, x_api_key))
         
         conn.commit()
         process_time_ms = int((time.time() - start_time) * 1000)
 
-        # Trigger God-Mode Telemetry & Stripe Billing (Log the unique filename!)
+        # Successful extraction, no quarantine needed
         background_tasks.add_task(
-            log_telemetry_and_bill_stripe, 
-            x_api_key, "/api/v1/extract", unique_filename, page_count, 200, process_time_ms, user.get("stripe_sub_item_id", "")
+            log_api_request_to_db, x_api_key, "/api/v1/extract", file.filename, drive_link, page_count, 200, process_time_ms, file_size_bytes, "", None
         )
 
         extracted_data["Billing"] = {
             "Customer": user["customer_name"],
             "PagesBilled": page_count,
             "Plan": user["plan"],
+            "FileSizeKB": round(file_size_bytes / 1024, 2),
             "ProcessingTimeMs": process_time_ms
         }
         return JSONResponse(content=extracted_data)
 
     except HTTPException as http_exc:
         process_time_ms = int((time.time() - start_time) * 1000)
-        background_tasks.add_task(log_telemetry_and_bill_stripe, x_api_key, "/api/v1/extract", unique_filename, page_count, http_exc.status_code, process_time_ms, "", http_exc.detail)
+        # We generally do not quarantine for simple 400/401/402 HTTP Errors
+        background_tasks.add_task(log_api_request_to_db, x_api_key, "/api/v1/extract", file.filename, drive_link, page_count, http_exc.status_code, process_time_ms, file_size_bytes, http_exc.detail, None)
         raise
+        
     except Exception as e:
         process_time_ms = int((time.time() - start_time) * 1000)
-        background_tasks.add_task(log_telemetry_and_bill_stripe, x_api_key, "/api/v1/extract", unique_filename, page_count, 500, process_time_ms, "", str(e))
-        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+        
+        # 🚀 QUARANTINE VAULT LOGIC (For 500 Crashes)
+        if temp_filepath and os.path.exists(temp_filepath):
+            safe_filename = f"crash_{uuid.uuid4().hex[:8]}_{file.filename}"
+            quarantine_path = os.path.join(QUARANTINE_DIR, safe_filename)
+            shutil.copy(temp_filepath, quarantine_path) 
+            
+        background_tasks.add_task(log_api_request_to_db, x_api_key, "/api/v1/extract", file.filename, drive_link, page_count, 500, process_time_ms, file_size_bytes, str(e), quarantine_path)
+        raise HTTPException(status_code=500, detail=f"Extraction failed. Engineers have been notified.")
+        
+    finally:
+        cursor.close()
+        conn.close()
+        # 🚀 ALWAYS delete the original temporary file
+        if temp_filepath and os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PUBLIC SAAS ONBOARDING
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/", response_class=HTMLResponse)
+async def public_landing_page(request: Request):
+    return templates.TemplateResponse(request=request, name="index.html", context={})
+
+@app.post("/request-access")
+async def submit_api_request(company_name: str = Form(...), email: str = Form(...), phone: str = Form("")):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO api_leads (company_name, email, phone) VALUES (%s, %s, %s)", (company_name, email, phone))
+        conn.commit()
+        return RedirectResponse("/success", status_code=303)
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     finally:
         cursor.close()
         conn.close()
 
+@app.get("/success", response_class=HTMLResponse)
+async def request_success(request: Request):
+    return templates.TemplateResponse(request=request, name="success.html", context={})
+
 # ══════════════════════════════════════════════════════════════════════════════
-#  ADMIN ACTIONS (SECURED)
+#  ADMIN ACTIONS & NOTIFICATIONS
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.post("/admin/customers")
-async def add_new_customer(customer: CustomerCreate, current_admin: str = Depends(verify_admin)):
-    raw_token = secrets.token_urlsafe(32)
-    new_api_key = f"sk_live_{raw_token}"
+@app.get("/admin/api/notifications")
+async def get_notifications(current_admin: str = Depends(verify_admin)):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        cursor.execute("SELECT COUNT(*) FROM api_leads WHERE status = 'Pending'")
+        pending_count = cursor.fetchone()[0]
+        return {"pending_requests": pending_count}
+    finally:
+        cursor.close()
+        conn.close()
+
+# 🚀 NEW: Secure Download Endpoint for Quarantined Files
+@app.get("/admin/api/download-quarantine/{filename}")
+async def download_quarantined_file(filename: str, current_admin: str = Depends(verify_admin)):
+    filepath = os.path.join(QUARANTINE_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File already deleted by 72-hour policy or does not exist.")
+    return FileResponse(path=filepath, filename=filename, media_type='application/octet-stream')
+
+@app.post("/admin/customers")
+async def add_new_customer(customer: CustomerCreate, current_admin: str = Depends(verify_admin)):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM api_users WHERE customer_name = %s", (customer.customer_name,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Customer already exists.")
+
+        raw_token = secrets.token_urlsafe(32)
+        new_api_key = f"sk_live_{raw_token}"
+        
         cursor.execute("""
             INSERT INTO api_users (api_key, customer_name, plan, credits_remaining, pages_processed_this_month)
             VALUES (%s, %s, %s, %s, 0)
         """, (new_api_key, customer.customer_name, customer.plan, customer.credits))
+        
+        cursor.execute("UPDATE api_leads SET status = 'Approved' WHERE company_name = %s", (customer.customer_name,))
         conn.commit()
         return {"status": "success", "api_key": new_api_key}
     except Exception as e:
@@ -289,17 +385,74 @@ async def regenerate_api_key(request: KeyRegenerateRequest, current_admin: str =
         cursor.close()
         conn.close()
 
-@app.get("/admin/files/{filename}")
-async def get_uploaded_file(filename: str, current_admin: str = Depends(verify_admin)):
-    """Serves the uploaded file securely to the Admin."""
-    file_path = os.path.join("uploads", filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found on server.")
-    return FileResponse(file_path)
+@app.get("/admin/api/customer-insights/{api_key}")
+async def get_customer_insights(api_key: str, current_admin: str = Depends(verify_admin)):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cursor.execute("SELECT customer_name, plan, credits_remaining, pages_processed_this_month FROM api_users WHERE api_key = %s", (api_key,))
+        user = cursor.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Customer not found")
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  DASHBOARD ROUTE
-# ══════════════════════════════════════════════════════════════════════════════
+        cursor.execute("""
+            SELECT DATE(created_at) as date, SUM(pages_billed) as pages
+            FROM api_requests_log
+            WHERE api_key = %s AND status_code = 200
+            GROUP BY DATE(created_at) ORDER BY date ASC
+        """, (api_key,))
+        usage_history = [{"date": str(row['date']), "pages": row['pages']} for row in cursor.fetchall()]
+
+        cursor.execute("""
+            SELECT created_at, error_message
+            FROM api_requests_log
+            WHERE api_key = %s AND status_code = 402
+            ORDER BY created_at DESC LIMIT 10
+        """, (api_key,))
+        quota_errors = [{"time": row['created_at'].strftime('%Y-%m-%d %H:%M'), "msg": row['error_message']} for row in cursor.fetchall()]
+
+        return {"user": user, "usage_history": usage_history, "quota_errors": quota_errors}
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.get("/admin/api/customer-logs/{api_key}")
+async def get_customer_logs(api_key: str, page: int = 1, limit: int = 10, current_admin: str = Depends(verify_admin)):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        offset = (page - 1) * limit
+        cursor.execute("SELECT COUNT(*) as total FROM api_requests_log WHERE api_key = %s", (api_key,))
+        total_records = cursor.fetchone()['total']
+
+        cursor.execute("""
+            SELECT created_at, file_name, pages_billed, status_code, processing_time_ms, file_size_bytes
+            FROM api_requests_log
+            WHERE api_key = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (api_key, limit, offset))
+        
+        logs = [{"time": log['created_at'].strftime('%Y-%m-%d %H:%M:%S'), 
+                 "file_name": log['file_name'], 
+                 "pages_billed": log['pages_billed'], 
+                 "status_code": log['status_code'], 
+                 "file_size_bytes": log['file_size_bytes'],
+                 "processing_time_ms": log['processing_time_ms']} for log in cursor.fetchall()]
+
+        total_pages = math.ceil(total_records / limit) if total_records > 0 else 1
+
+        return {
+            "total_records": total_records,
+            "current_page": page,
+            "total_pages": total_pages,
+            "limit": limit,
+            "logs": logs
+        }
+    finally:
+        cursor.close()
+        conn.close()
+
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def view_admin_dashboard(request: Request, current_admin: str = Depends(verify_admin)):
@@ -321,8 +474,16 @@ async def view_admin_dashboard(request: Request, current_admin: str = Depends(ve
         error_rate = round((error_stats['total_errors'] / error_stats['total_reqs']) * 100, 2) if error_stats and error_stats['total_reqs'] > 0 else 0
         kpis = {"total_pages": total_pages, "avg_latency": avg_latency, "error_rate": error_rate}
 
-        cursor.execute("SELECT created_at, status_code, file_name, error_message FROM api_requests_log WHERE status_code > 399 ORDER BY created_at DESC LIMIT 5")
+        # 🚀 Fetching quarantine_path for download links in HTML
+        cursor.execute("SELECT created_at, status_code, file_name, error_message, quarantine_path FROM api_requests_log WHERE status_code > 399 ORDER BY created_at DESC LIMIT 10")
         recent_errors = cursor.fetchall()
+        
+        # Clean up path for frontend parsing
+        for err in recent_errors:
+            if err.get('quarantine_path'):
+                err['q_filename'] = err['quarantine_path'].replace('\\', '/').split('/')[-1]
+            else:
+                err['q_filename'] = None
 
         cursor.execute("SELECT DATE(created_at) as date, SUM(pages_billed) as daily_pages FROM api_requests_log WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' GROUP BY DATE(created_at) ORDER BY date ASC")
         chart_data = cursor.fetchall()
@@ -335,17 +496,20 @@ async def view_admin_dashboard(request: Request, current_admin: str = Depends(ve
         company_stats = cursor.fetchall()
 
         cursor.execute("""
-            SELECT u.customer_name, l.file_name, l.pages_billed, l.created_at, l.status_code 
+            SELECT u.customer_name, l.file_name, l.file_url, l.pages_billed, l.created_at, l.status_code, l.processing_time_ms, l.file_size_bytes 
             FROM api_requests_log l JOIN api_users u ON l.api_key = u.api_key 
             ORDER BY l.created_at DESC LIMIT 20
         """)
         file_logs = cursor.fetchall()
         
+        cursor.execute("SELECT * FROM api_leads WHERE status = 'Pending' ORDER BY requested_at DESC")
+        api_leads = cursor.fetchall()
+        
         return templates.TemplateResponse(request=request, name="admin.html", context={
             "admin_user": current_admin, "users": users, "kpis": kpis, "errors": recent_errors,
             "chart_labels": json.dumps([str(row['date']) for row in chart_data]),
             "chart_values": json.dumps([row['daily_pages'] for row in chart_data]),
-            "company_stats": company_stats, "file_logs": file_logs
+            "company_stats": company_stats, "file_logs": file_logs, "api_leads": api_leads
         })
     finally:
         cursor.close()

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediExtract API | Pharma Sales Statement Parser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 font-sans text-slate-800 antialiased scroll-smooth">
+
+    <nav class="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-sm">
+        <div class="flex items-center gap-3">
+            <div class="bg-blue-600 p-2 rounded-lg">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            </div>
+            <div class="text-xl font-bold tracking-tight text-slate-900">MediExtract<span class="text-blue-600">API</span></div>
+        </div>
+        <div class="hidden md:flex gap-8 font-medium text-slate-600">
+            <a href="#how-it-works" class="hover:text-blue-600 transition">Capabilities</a>
+            <a href="#use-cases" class="hover:text-blue-600 transition">Use Cases</a>
+            <a href="#about" class="hover:text-blue-600 transition">The Technology</a>
+        </div>
+        <div>
+            <a href="#request-access" class="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-md">Get API Key</a>
+        </div>
+    </nav>
+
+    <section class="max-w-6xl mx-auto px-6 py-24 text-center">
+        <div class="inline-block bg-blue-100 text-blue-800 px-4 py-1.5 rounded-full font-bold text-sm tracking-wide mb-6 uppercase border border-blue-200">
+            📊 Secondary Sales & Statement Extraction
+        </div>
+        <h1 class="text-5xl md:text-7xl font-black text-slate-900 tracking-tight leading-tight mb-6">
+            Parse Medical Statements <br>
+            <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">into Structured Data.</span>
+        </h1>
+        <p class="text-xl text-slate-500 mb-10 max-w-2xl mx-auto leading-relaxed">
+            Stop manual data entry. Our high-performance API ingests messy PDFs, scanned distributor statements, and ERP exports, returning perfectly mapped, store-level JSON/CSV data instantly.
+        </p>
+        <div class="flex justify-center gap-4">
+            <a href="#request-access" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl text-lg font-bold shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2">
+                Request API Access <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+            </a>
+        </div>
+    </section>
+
+    <section class="border-y border-slate-200 bg-white py-10">
+        <div class="max-w-5xl mx-auto px-6 text-center">
+            <p class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Powering data pipelines for</p>
+            <div class="flex flex-wrap justify-center items-center gap-12 md:gap-24 opacity-60 transition-all duration-500 font-black tracking-tighter text-xl md:text-2xl text-slate-800">
+                <h2>National Distributors</h2>
+                <h2>Pharmacy Chains</h2>
+                <h2>B2B Platforms</h2>
+                <h2>Audit & Accounting</h2>
+            </div>
+        </div>
+    </section>
+
+    <section id="how-it-works" class="bg-slate-50 py-24 border-t border-slate-200">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-slate-900">Intelligent Extraction for Complex Hierarchies</h2>
+                <p class="text-lg text-slate-500 mt-3">We built our parsers to handle the unique reporting complexities of the pharmaceutical supply chain.</p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="p-8 bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-lg transition-shadow">
+                    <div class="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center mb-6 text-2xl">🏢</div>
+                    <h3 class="text-xl font-bold mb-3">Store-Level Mapping</h3>
+                    <p class="text-slate-500 leading-relaxed">Extracts and maps aggregate sales data to specific retail pharmacies, clinics, and geographical areas directly from cumulative reports.</p>
+                </div>
+                <div class="p-8 bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-lg transition-shadow">
+                    <div class="w-14 h-14 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-6 text-2xl">📑</div>
+                    <h3 class="text-xl font-bold mb-3">Deep Entity Extraction</h3>
+                    <p class="text-slate-500 leading-relaxed">Automatically identifies Agency Names, GSTINs, Manufacturer Companies, and reporting periods (From/To Dates).</p>
+                </div>
+                <div class="p-8 bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-lg transition-shadow">
+                    <div class="w-14 h-14 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center mb-6 text-2xl">🖨️</div>
+                    <h3 class="text-xl font-bold mb-3">Financial Reconciliation</h3>
+                    <p class="text-slate-500 leading-relaxed">Captures Qty, Free Qty, Amounts, Taxes, and Discounts, ensuring the extracted line items match the aggregate statement value.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="use-cases" class="bg-white py-24 border-t border-slate-200">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="grid md:grid-cols-2 gap-16 items-center">
+                <div>
+                    <h2 class="text-4xl font-bold text-slate-900 mb-6">Designed for Developers</h2>
+                    <p class="text-lg text-slate-600 mb-8">
+                        Integrate our extraction engine directly into your software with a single REST API call. We handle the heavy lifting of table boundary detection and hierarchical data mapping.
+                    </p>
+                    <ul class="space-y-6">
+                        <li class="flex items-start gap-4">
+                            <div class="bg-blue-100 p-2 rounded text-blue-700 mt-1"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></div>
+                            <div>
+                                <h4 class="font-bold text-lg text-slate-800">Secondary Sales Tracking</h4>
+                                <p class="text-slate-500">Ingest quarterly sales statements from thousands of regional stockists to track manufacturer-to-retailer product flow.</p>
+                            </div>
+                        </li>
+                        <li class="flex items-start gap-4">
+                            <div class="bg-blue-100 p-2 rounded text-blue-700 mt-1"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></div>
+                            <div>
+                                <h4 class="font-bold text-lg text-slate-800">Statement Reconciliation</h4>
+                                <p class="text-slate-500">Convert hundreds of pages of unstructured cumulative ERP exports into structured CSVs for instant audit and matching.</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+                
+                <div class="bg-slate-900 rounded-2xl p-8 text-sm font-mono text-blue-400 shadow-2xl overflow-x-auto">
+                    <div class="flex gap-2 mb-4">
+                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    </div>
+                    <p class="text-slate-400">// Send File: statement_export.pdf</p>
+                    <p class="text-indigo-300">POST</p> <p>https://api.mediextract.com/v1/extract</p>
+                    <br>
+                    <p class="text-slate-400">// Instantly Receive Structured JSON</p>
+                    <p>{</p>
+                    <p class="pl-4">"status": "success",</p>
+                    <p class="pl-4">"doc_type": "STATEMENT",</p>
+                    <p class="pl-4">"agency_name": "[DISTRIBUTOR_NAME]",</p>
+                    <p class="pl-4">"company": "[MANUFACTURER_NAME]",</p>
+                    <p class="pl-4">"reporting_period": "01-10-2025 to 31-12-2025",</p>
+                    <p class="pl-4">"data": [</p>
+                    <p class="pl-8">{</p>
+                    <p class="pl-12">"store_name": "[RETAIL_PHARMACY_1]",</p>
+                    <p class="pl-12">"location": "[AREA_CODE_A]",</p>
+                    <p class="pl-12">"description": "CUMULATIVE SUMMARY",</p>
+                    <p class="pl-12">"qty": 0,</p>
+                    <p class="pl-12 text-yellow-300">"free_qty": 0,</p>
+                    <p class="pl-12 text-green-300">"amount": 5866.37</p>
+                    <p class="pl-8">},</p>
+                    <p class="pl-8">{</p>
+                    <p class="pl-12">"store_name": "[RETAIL_PHARMACY_2]",</p>
+                    <p class="pl-12">"location": "[AREA_CODE_B]",</p>
+                    <p class="pl-12 text-green-300">"amount": 1522.60</p>
+                    <p class="pl-8">}</p>
+                    <p class="pl-4">]</p>
+                    <p>}</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="about" class="py-24 bg-slate-50 border-t border-slate-200">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-slate-900 mb-6">Unlocking Unstructured Data</h2>
+                <p class="text-lg text-slate-600 max-w-3xl mx-auto leading-relaxed">
+                    Generic OCR tools fail on complex medical statements because they don't understand the context of nested tables, cumulative summaries, and varying report headers. We combine deterministic layout algorithms with edge-optimized ML to guarantee reliable data formatting.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8 mb-16">
+                <div class="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <h3 class="text-4xl font-black text-blue-600 mb-2">99.8%</h3>
+                    <h4 class="font-bold text-slate-800 mb-2">Extraction Accuracy</h4>
+                    <p class="text-sm text-slate-500">Rigorous math-reconciliation ensures the extracted line items match the total invoice value.</p>
+                </div>
+                <div class="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <h3 class="text-4xl font-black text-blue-600 mb-2">50+</h3>
+                    <h4 class="font-bold text-slate-800 mb-2">Supported Formats</h4>
+                    <p class="text-sm text-slate-500">Trained on exports from every major billing software and generic spreadsheet layout.</p>
+                </div>
+                <div class="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <h3 class="text-4xl font-black text-blue-600 mb-2">&lt;2s</h3>
+                    <h4 class="font-bold text-slate-800 mb-2">Processing Time</h4>
+                    <p class="text-sm text-slate-500">Stateless, in-memory processing guarantees lightning-fast responses and strict data privacy.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="request-access" class="py-24 bg-slate-900 text-white">
+        <div class="max-w-3xl mx-auto px-6">
+            <div class="text-center mb-10">
+                <h2 class="text-4xl font-bold mb-4">Start Extracting Today</h2>
+                <p class="text-slate-400">Our API is currently in private beta. Request an API key below, and our engineering team will provision your account.</p>
+            </div>
+            
+            <div class="bg-white p-10 rounded-2xl shadow-2xl text-slate-800">
+                <form action="/request-access" method="POST" class="space-y-6">
+                    <div class="grid grid-cols-2 gap-6">
+                        <div class="col-span-2 md:col-span-1">
+                            <label class="block text-sm font-bold text-slate-700 mb-2">Organization Name *</label>
+                            <input type="text" name="company_name" required class="w-full border border-slate-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all bg-slate-50" placeholder="Your Organization">
+                        </div>
+                        <div class="col-span-2 md:col-span-1">
+                            <label class="block text-sm font-bold text-slate-700 mb-2">Work Email *</label>
+                            <input type="email" name="email" required class="w-full border border-slate-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all bg-slate-50" placeholder="developer@yourdomain.com">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 mb-2">Phone Number (Optional)</label>
+                        <input type="text" name="phone" class="w-full border border-slate-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all bg-slate-50" placeholder="Contact Number">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all shadow-md shadow-blue-600/20 text-lg">
+                        Request API Key
+                    </button>
+                    <p class="text-center text-xs text-slate-400 mt-4">By submitting, you agree to our Terms of Service and Privacy Policy.</p>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <footer class="bg-slate-950 text-slate-500 text-center py-10 text-sm">
+        <div class="font-bold text-xl tracking-tight text-slate-700 mb-4">MediExtract<span class="text-blue-900">API</span></div>
+        <p>&copy; 2024 MediExtract Data Solutions. All rights reserved.</p>
+    </footer>
+
+</body>
+</html>

@@ -3,49 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Marg ERP API | Admin Console</title>
+    <title>Extraction API | Admin Console</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         .calc-height { height: calc(100vh - 64px); }
+        /* Toast Notification Animation */
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        .toast-animate { animation: slideIn 0.3s ease-out forwards; }
     </style>
 </head>
 <body class="bg-gray-50 font-sans text-gray-800 overflow-hidden">
+
+    <audio id="alarmSound" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+
+    <div id="toastContainer" class="fixed bottom-5 right-5 z-[200] flex flex-col gap-3"></div>
 
     <nav class="bg-slate-900 text-white h-16 px-6 shadow-md flex justify-between items-center z-50 relative">
         <div class="flex items-center gap-3">
             <div class="bg-blue-600 p-2 rounded-lg">
                 <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
             </div>
-            <div class="text-xl font-bold tracking-wide">Marg ERP API Hub</div>
+            <div class="text-xl font-bold tracking-wide">Extraction API Hub</div>
         </div>
-        <div class="text-sm flex items-center gap-4">
-            <span class="bg-slate-800 px-3 py-1 rounded-full border border-slate-700">Logged in as: <span class="font-bold text-blue-400">{{ admin_user }}</span></span>
+        <div class="text-sm flex items-center gap-6">
+            
+            <button onclick="switchTab('tab-leads', document.getElementById('btn-leads'))" class="relative text-gray-400 hover:text-white transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                <span id="bellBadge" class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden shadow-lg animate-pulse">0</span>
+            </button>
+
+            <span class="bg-slate-800 px-3 py-1 rounded-full border border-slate-700 hidden md:block">Logged in as: <span class="font-bold text-blue-400">{{ admin_user }}</span></span>
             <a href="/logout" class="text-gray-400 hover:text-white font-medium transition-colors">Logout &rarr;</a>
         </div>
     </nav>
 
     <div class="flex calc-height">
         
-        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10">
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10 overflow-y-auto">
             <div class="p-4 uppercase text-xs font-bold text-gray-400 tracking-wider mb-2">Main Menu</div>
             <nav class="flex-1 flex flex-col gap-1 px-3">
+                
                 <button onclick="switchTab('tab-overview', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg bg-blue-50 text-blue-700 font-semibold transition-all">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
                     Dashboard Overview
                 </button>
+
+                <button onclick="switchTab('tab-insights', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path></svg>
+                    Customer Insights
+                </button>
+
+                <button id="btn-leads" onclick="switchTab('tab-leads', this)" class="sidebar-btn flex justify-between items-center w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                        API Requests
+                    </div>
+                    <span id="sidebarBadge" class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full hidden">0</span>
+                </button>
+
                 <button onclick="switchTab('tab-plans', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
                     Company Plans
                 </button>
+
                 <button onclick="switchTab('tab-stats', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
                     Parsing Stats
                 </button>
+
                 <button onclick="switchTab('tab-logs', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 font-medium transition-all">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                     Live Processing Log
                 </button>
+
                 <button onclick="switchTab('tab-errors', this)" class="sidebar-btn flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-red-50 hover:text-red-600 font-medium transition-all">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                     Recent Errors
@@ -91,6 +122,145 @@
                     <h2 class="font-bold text-lg text-slate-800 mb-4">📈 7-Day Usage Trends (Pages Billed)</h2>
                     <div class="w-full" style="height: 350px;">
                         <canvas id="usageChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-insights" class="tab-content hidden animate-fade-in">
+                <div class="mb-6 flex justify-between items-end">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-800">Customer Deep Dive</h1>
+                        <p class="text-gray-500 mt-1">Analyze usage patterns and paginated logs per company.</p>
+                    </div>
+                    
+                    <div class="w-72">
+                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Select Company</label>
+                        <select id="companyFilter" onchange="loadCustomerInsights()" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-600 outline-none bg-white font-semibold text-slate-700 shadow-sm">
+                            <option value="" disabled selected>-- Choose a Customer --</option>
+                            {% for u in users %}
+                                <option value="{{ u.api_key }}">{{ u.customer_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div id="insightDashboard" class="hidden">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                        <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-blue-500">
+                            <p class="text-xs font-bold text-gray-400 uppercase">Current Plan</p>
+                            <p id="insPlan" class="text-xl font-black text-slate-800 mt-1 uppercase">-</p>
+                        </div>
+                        <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-green-500">
+                            <p class="text-xs font-bold text-gray-400 uppercase">Usage This Month</p>
+                            <p id="insUsage" class="text-xl font-black text-slate-800 mt-1">-</p>
+                        </div>
+                        <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-purple-500">
+                            <p class="text-xs font-bold text-gray-400 uppercase">Prepaid Credits Left</p>
+                            <p id="insCredits" class="text-xl font-black text-slate-800 mt-1">-</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                        <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h3 class="font-bold text-slate-800 mb-4">All-Time Extraction Pattern</h3>
+                            <div class="w-full h-64">
+                                <canvas id="customerChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-red-100 overflow-y-auto max-h-80">
+                            <h3 class="font-bold text-red-600 mb-4 flex items-center gap-2">
+                                ⚠️ Quota Exhaustion Alerts
+                            </h3>
+                            <p class="text-xs text-gray-500 mb-4">Times this customer was blocked because they ran out of credits.</p>
+                            <ul id="insQuotaList" class="space-y-3 text-sm"></ul>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="font-bold text-slate-800 text-lg">Detailed Extraction Ledger</h3>
+                            <div class="flex items-center gap-3 text-sm">
+                                <span class="text-gray-500 font-medium">Rows per page:</span>
+                                <select id="logLimitSelect" onchange="changeLogLimit()" class="border border-gray-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                                    <option value="10">10</option>
+                                    <option value="20">20</option>
+                                    <option value="50">50</option>
+                                    <option value="100">100</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b border-t">
+                                        <th class="p-4 font-bold">Timestamp</th>
+                                        <th class="p-4 font-bold">File Name</th>
+                                        <th class="p-4 font-bold text-center">Size</th>
+                                        <th class="p-4 font-bold text-center">Process Time</th>
+                                        <th class="p-4 font-bold text-center">Pages Billed</th>
+                                        <th class="p-4 font-bold">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="insLogsTableBody"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="flex justify-between items-center mt-6">
+                            <div class="text-sm text-gray-500 font-medium" id="logPaginationInfo">Showing 0 to 0 of 0 entries</div>
+                            <div class="flex gap-2">
+                                <button onclick="prevLogPage()" id="btnPrevLog" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium">Previous</button>
+                                <button onclick="nextLogPage()" id="btnNextLog" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium">Next</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-leads" class="tab-content hidden animate-fade-in">
+                <div class="mb-6 flex justify-between items-end">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-800">Pending API Requests</h1>
+                        <p class="text-gray-500 mt-1">Companies requesting access to your Extraction Pipeline.</p>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b">
+                                    <th class="p-5 font-bold">Requested Date</th>
+                                    <th class="p-5 font-bold">Company Name</th>
+                                    <th class="p-5 font-bold">Contact Info</th>
+                                    <th class="p-5 font-bold">Status</th>
+                                    <th class="p-5 font-bold text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-sm">
+                                {% for lead in api_leads %}
+                                <tr class="border-b border-gray-50 hover:bg-gray-50/80 transition-colors">
+                                    <td class="p-5 text-gray-400 font-medium whitespace-nowrap">{{ lead.requested_at.strftime('%b %d, %Y') }}</td>
+                                    <td class="p-5 font-bold text-slate-700">{{ lead.company_name }}</td>
+                                    <td class="p-5">
+                                        <div class="text-slate-700">{{ lead.email }}</div>
+                                        <div class="text-gray-400 text-xs mt-1">📞 {{ lead.phone }}</div>
+                                    </td>
+                                    <td class="p-5">
+                                        <span class="bg-yellow-100 text-yellow-800 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border border-yellow-200">{{ lead.status }}</span>
+                                    </td>
+                                    <td class="p-5 text-right">
+                                        <button onclick="document.getElementById('addCustomerModal').classList.remove('hidden'); document.getElementById('custName').value='{{ lead.company_name }}';" class="text-blue-600 hover:text-blue-800 font-bold bg-blue-50 px-3 py-1.5 rounded-md transition-colors mr-2">
+                                            Approve & Add
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="5" class="p-10 text-center text-gray-400 font-medium">No pending API requests right now.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -199,7 +369,9 @@
                                     <th class="p-5 font-bold">Timestamp</th>
                                     <th class="p-5 font-bold">Customer Name</th>
                                     <th class="p-5 font-bold">File Name</th>
-                                    <th class="p-5 font-bold text-center">Pages Extracted</th>
+                                    <th class="p-5 font-bold text-center">Size (KB)</th>
+                                    <th class="p-5 font-bold text-center">Proc. Time</th>
+                                    <th class="p-5 font-bold text-center">Pages Billed</th>
                                     <th class="p-5 font-bold">Status</th>
                                 </tr>
                             </thead>
@@ -208,10 +380,15 @@
                                 <tr class="border-b border-gray-50 hover:bg-gray-50/80">
                                     <td class="p-5 text-gray-400 font-medium whitespace-nowrap">{{ log.created_at.strftime('%b %d, %H:%M') }}</td>
                                     <td class="p-5 font-bold text-slate-700">{{ log.customer_name }}</td>
-                                    <td class="p-5 text-blue-600 font-mono text-xs max-w-[200px] truncate" title="{{ log.file_name }}">
-                                        <a href="/admin/files/{{ log.file_name }}" target="_blank" class="hover:underline text-blue-600">
-                                            {{ log.file_name }}
-                                        </a>
+                                    <td class="p-5 text-slate-700 font-mono text-xs max-w-[200px] truncate" title="{{ log.file_name }}">
+                                        <span class="font-bold block truncate">{{ log.file_name }}</span>
+                                        <span class="text-gray-400 text-[10px] uppercase tracking-wide">(Processed Locally)</span>
+                                    </td>
+                                    <td class="p-5 font-bold text-slate-500 text-center">
+                                        {% if log.file_size_bytes %}{{ (log.file_size_bytes / 1024) | round(1) }}{% else %}-{% endif %}
+                                    </td>
+                                    <td class="p-5 font-bold text-blue-600 text-center">
+                                        {% if log.processing_time_ms %}{{ (log.processing_time_ms / 1000) | round(2) }}s{% else %}-{% endif %}
                                     </td>
                                     <td class="p-5 font-bold text-slate-700 text-center">{{ log.pages_billed }}</td>
                                     <td class="p-5">
@@ -223,7 +400,7 @@
                                     </td>
                                 </tr>
                                 {% else %}
-                                <tr><td colspan="5" class="p-10 text-center text-gray-400 font-medium">No files processed yet.</td></tr>
+                                <tr><td colspan="7" class="p-10 text-center text-gray-400 font-medium">No files processed yet.</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -284,12 +461,10 @@
     <div id="addCustomerModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm hidden flex items-center justify-center z-[100] transition-all">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 transform scale-100">
             <h2 class="text-2xl font-bold mb-6 text-slate-800">Add New Customer</h2>
-            
             <div class="mb-5">
                 <label class="block text-sm font-bold text-gray-700 mb-2">Company Name</label>
                 <input type="text" id="custName" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all" placeholder="e.g. Acme Pharmaceuticals">
             </div>
-
             <div class="mb-5">
                 <label class="block text-sm font-bold text-gray-700 mb-2">Billing Plan</label>
                 <select id="custPlan" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-white" onchange="toggleAddCredits()">
@@ -297,16 +472,14 @@
                     <option value="prepaid">Prepaid (Volume Credit Pack)</option>
                 </select>
             </div>
-
             <div class="mb-8 hidden" id="creditsDiv">
                 <label class="block text-sm font-bold text-gray-700 mb-2">Starting Page Credits</label>
                 <input type="number" id="custCredits" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value="0">
                 <p class="text-xs text-gray-400 mt-1">Number of pages this customer can parse before being blocked.</p>
             </div>
-
             <div class="flex justify-end gap-3 mt-8">
                 <button onclick="document.getElementById('addCustomerModal').classList.add('hidden')" class="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 font-semibold rounded-lg transition-colors">Cancel</button>
-                <button onclick="submitNewCustomer()" class="px-5 py-2.5 bg-blue-600 text-white hover:bg-blue-700 font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                <button id="btnSubmitNewCustomer" onclick="submitNewCustomer()" class="px-5 py-2.5 bg-blue-600 text-white hover:bg-blue-700 font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
                     Generate API Key
                 </button>
@@ -317,15 +490,11 @@
     <div id="editCustomerModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm hidden flex items-center justify-center z-[100] transition-all">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 transform scale-100">
             <h2 class="text-2xl font-bold mb-6 text-slate-800">Edit Customer</h2>
-            
             <input type="hidden" id="editApiKey">
-
             <div class="mb-5">
                 <label class="block text-sm font-bold text-gray-700 mb-2">Company Name</label>
                 <input type="text" id="editCustName" class="w-full border border-gray-200 bg-gray-50 text-gray-500 rounded-lg px-4 py-2.5 focus:outline-none" readonly>
-                <p class="text-xs text-gray-400 mt-1">Company names cannot be changed once created.</p>
             </div>
-
             <div class="mb-5">
                 <label class="block text-sm font-bold text-gray-700 mb-2">Billing Plan</label>
                 <select id="editCustPlan" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-white" onchange="toggleEditCredits()">
@@ -333,13 +502,10 @@
                     <option value="prepaid">Prepaid (Volume Credit Pack)</option>
                 </select>
             </div>
-
             <div class="mb-8" id="editCreditsDiv">
                 <label class="block text-sm font-bold text-gray-700 mb-2">Available Page Credits</label>
                 <input type="number" id="editCustCredits" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
-                <p class="text-xs text-gray-400 mt-1">Update the remaining credits for this customer.</p>
             </div>
-
             <div class="flex justify-end gap-3 mt-8">
                 <button onclick="document.getElementById('editCustomerModal').classList.add('hidden')" class="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 font-semibold rounded-lg transition-colors">Cancel</button>
                 <button onclick="submitEditCustomer()" class="px-5 py-2.5 bg-blue-600 text-white hover:bg-blue-700 font-semibold rounded-lg shadow-sm transition-colors">
@@ -350,7 +516,66 @@
     </div>
 
     <script>
-        // --- Tab Switching Logic ---
+        // --- LIVE NOTIFICATION ALARM SYSTEM 🚀 ---
+        let knownPendingLeads = {{ api_leads|length }};
+        
+        // Show badge on initial load if there are pending leads
+        window.addEventListener('DOMContentLoaded', () => {
+            if(knownPendingLeads > 0) {
+                document.getElementById('bellBadge').innerText = knownPendingLeads;
+                document.getElementById('bellBadge').classList.remove('hidden');
+                document.getElementById('sidebarBadge').innerText = knownPendingLeads;
+                document.getElementById('sidebarBadge').classList.remove('hidden');
+            }
+        });
+
+        // Polling function to check for new leads every 15 seconds
+        setInterval(async () => {
+            try {
+                const res = await fetch('/admin/api/notifications');
+                const data = await res.json();
+                
+                if(data.pending_requests > knownPendingLeads) {
+                    const diff = data.pending_requests - knownPendingLeads;
+                    
+                    // 1. Play Alarm Sound
+                    document.getElementById('alarmSound').play().catch(e => console.log('Audio blocked by browser auto-play policy'));
+                    
+                    // 2. Show slide-in Toast notification
+                    showToast(`🚨 ${diff} New API Request(s) just arrived!`);
+                    
+                    // 3. Update Badges
+                    document.getElementById('bellBadge').innerText = data.pending_requests;
+                    document.getElementById('bellBadge').classList.remove('hidden');
+                    document.getElementById('sidebarBadge').innerText = data.pending_requests;
+                    document.getElementById('sidebarBadge').classList.remove('hidden');
+                    
+                    knownPendingLeads = data.pending_requests;
+                }
+            } catch(e) { console.error("Notification poll failed"); }
+        }, 15000);
+
+        function showToast(message) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'bg-white border-l-4 border-blue-600 text-slate-800 shadow-2xl rounded-lg p-4 font-bold flex items-center gap-3 toast-animate';
+            toast.innerHTML = `<div class="bg-blue-100 text-blue-600 p-1.5 rounded-full"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg></div> ${message}`;
+            container.appendChild(toast);
+            
+            // Auto remove toast after 5 seconds
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+
+        // --- DASHBOARD UI SCRIPTS ---
+        let customerChartInstance = null;
+        let currentInsightApiKey = "";
+        let currentLogPage = 1;
+        let currentLogLimit = 10;
+        let totalLogPages = 1;
+
         function switchTab(tabId, clickedBtn) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.getElementById(tabId).classList.remove('hidden');
@@ -364,7 +589,6 @@
             clickedBtn.classList.add('bg-blue-50', 'text-blue-700', 'font-semibold');
         }
 
-        // --- Chart.js Rendering ---
         const ctx = document.getElementById('usageChart').getContext('2d');
         const labels = {{ chart_labels | safe }};
         const dataValues = {{ chart_values | safe }};
@@ -399,31 +623,111 @@
             }
         });
 
-        // --- Add Customer Modal Logic ---
+        async function loadCustomerInsights() {
+            currentInsightApiKey = document.getElementById('companyFilter').value;
+            if (!currentInsightApiKey) return;
+            currentLogPage = 1; 
+            
+            try {
+                const response = await fetch(`/admin/api/customer-insights/${currentInsightApiKey}`);
+                const data = await response.json();
+
+                document.getElementById('insightDashboard').classList.remove('hidden');
+                document.getElementById('insPlan').innerText = data.user.plan.replace('_', ' ');
+                document.getElementById('insUsage').innerText = data.user.pages_processed_this_month + " Pages";
+                document.getElementById('insCredits').innerText = data.user.credits_remaining;
+
+                const errorList = document.getElementById('insQuotaList');
+                errorList.innerHTML = '';
+                if (data.quota_errors.length === 0) {
+                    errorList.innerHTML = '<li class="text-green-600 font-medium bg-green-50 p-3 rounded text-center">No limit hits recorded. Healthy!</li>';
+                } else {
+                    data.quota_errors.forEach(err => {
+                        errorList.innerHTML += `<li class="border-l-4 border-red-400 pl-3 py-1"><span class="text-red-700 font-bold block">${err.msg}</span><span class="text-xs text-gray-400">${err.time}</span></li>`;
+                    });
+                }
+
+                if (customerChartInstance) customerChartInstance.destroy();
+                const ctxInsight = document.getElementById('customerChart').getContext('2d');
+                customerChartInstance = new Chart(ctxInsight, {
+                    type: 'bar',
+                    data: {
+                        labels: data.usage_history.map(item => item.date),
+                        datasets: [{
+                            label: 'Pages Extracted',
+                            data: data.usage_history.map(item => item.pages),
+                            backgroundColor: '#3b82f6',
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, grid: { borderDash: [2, 2] } } }, plugins: { legend: { display: false } } }
+                });
+
+                fetchPaginatedLogs();
+            } catch (error) { console.error("Failed to load insights:", error); }
+        }
+
+        async function fetchPaginatedLogs() {
+            if (!currentInsightApiKey) return;
+            try {
+                const response = await fetch(`/admin/api/customer-logs/${currentInsightApiKey}?page=${currentLogPage}&limit=${currentLogLimit}`);
+                const data = await response.json();
+                totalLogPages = data.total_pages;
+                
+                const tbody = document.getElementById('insLogsTableBody');
+                tbody.innerHTML = '';
+                
+                if(data.logs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-gray-500">No records found for this customer.</td></tr>';
+                } else {
+                    data.logs.forEach(log => {
+                        const statusBadge = log.status_code === 200 ? `<span class="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">200 OK</span>` : `<span class="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold">${log.status_code} Err</span>`;
+                        const fileSize = log.file_size_bytes ? (log.file_size_bytes / 1024).toFixed(1) + ' KB' : '-';
+                        const procTime = log.processing_time_ms ? (log.processing_time_ms / 1000).toFixed(2) + 's' : '-';
+
+                        tbody.innerHTML += `
+                            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                                <td class="p-4 text-gray-500 font-medium whitespace-nowrap">${log.time}</td>
+                                <td class="p-4 text-slate-700 font-mono text-xs truncate max-w-[200px]" title="${log.file_name}">${log.file_name}</td>
+                                <td class="p-4 text-gray-500 font-bold text-center">${fileSize}</td>
+                                <td class="p-4 text-blue-600 font-bold text-center">${procTime}</td>
+                                <td class="p-4 font-bold text-slate-700 text-center">${log.pages_billed}</td>
+                                <td class="p-4 text-center">${statusBadge}</td>
+                            </tr>
+                        `;
+                    });
+                }
+                const startItem = (currentLogPage - 1) * currentLogLimit + 1;
+                const endItem = Math.min(currentLogPage * currentLogLimit, data.total_records);
+                document.getElementById('logPaginationInfo').innerText = `Showing ${data.total_records === 0 ? 0 : startItem} to ${endItem} of ${data.total_records} entries`;
+                document.getElementById('btnPrevLog').disabled = (currentLogPage <= 1);
+                document.getElementById('btnNextLog').disabled = (currentLogPage >= totalLogPages);
+            } catch (error) { console.error("Failed to load paginated logs:", error); }
+        }
+
+        function changeLogLimit() { currentLogLimit = parseInt(document.getElementById('logLimitSelect').value); currentLogPage = 1; fetchPaginatedLogs(); }
+        function prevLogPage() { if (currentLogPage > 1) { currentLogPage--; fetchPaginatedLogs(); } }
+        function nextLogPage() { if (currentLogPage < totalLogPages) { currentLogPage++; fetchPaginatedLogs(); } }
+
         function toggleAddCredits() {
             const plan = document.getElementById('custPlan').value;
             const creditsDiv = document.getElementById('creditsDiv');
-            if (plan === 'prepaid') {
-                creditsDiv.classList.remove('hidden');
-            } else {
-                creditsDiv.classList.add('hidden');
-            }
+            if (plan === 'prepaid') { creditsDiv.classList.remove('hidden'); } else { creditsDiv.classList.add('hidden'); }
         }
 
         async function submitNewCustomer() {
             const name = document.getElementById('custName').value;
             const plan = document.getElementById('custPlan').value;
             const credits = parseInt(document.getElementById('custCredits').value) || 0;
+            if (!name) { alert("Please enter a company name."); return; }
 
-            if (!name) {
-                alert("Please enter a company name.");
-                return;
-            }
+            const btn = document.getElementById('btnSubmitNewCustomer');
+            btn.disabled = true;
+            btn.innerHTML = "Processing...";
 
             try {
                 const response = await fetch('/admin/customers', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ customer_name: name, plan: plan, credits: credits })
                 });
                 const data = await response.json();
@@ -432,21 +736,18 @@
                     window.location.reload(); 
                 } else {
                     alert("Error: " + data.detail);
+                    btn.disabled = false; btn.innerHTML = "Generate API Key";
                 }
             } catch (error) {
                 alert("Request failed: " + error);
+                btn.disabled = false; btn.innerHTML = "Generate API Key";
             }
         }
 
-        // --- Edit Customer Modal Logic ---
         function toggleEditCredits() {
             const plan = document.getElementById('editCustPlan').value;
             const creditsDiv = document.getElementById('editCreditsDiv');
-            if (plan === 'prepaid') {
-                creditsDiv.classList.remove('hidden');
-            } else {
-                creditsDiv.classList.add('hidden');
-            }
+            if (plan === 'prepaid') { creditsDiv.classList.remove('hidden'); } else { creditsDiv.classList.add('hidden'); }
         }
 
         function openEditModal(apiKey, customerName, plan, credits) {
@@ -454,7 +755,6 @@
             document.getElementById('editCustName').value = customerName;
             document.getElementById('editCustPlan').value = plan;
             document.getElementById('editCustCredits').value = credits;
-            
             toggleEditCredits();
             document.getElementById('editCustomerModal').classList.remove('hidden');
         }
@@ -463,49 +763,29 @@
             const apiKey = document.getElementById('editApiKey').value;
             const plan = document.getElementById('editCustPlan').value;
             const credits = parseInt(document.getElementById('editCustCredits').value) || 0;
-
             try {
                 const response = await fetch('/admin/customers', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: 'PUT', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ api_key: apiKey, plan: plan, credits: credits })
                 });
-
                 const data = await response.json();
-                if (response.ok) {
-                    window.location.reload(); 
-                } else {
-                    alert("Error: " + data.detail);
-                }
-            } catch (error) {
-                alert("Request failed: " + error);
-            }
+                if (response.ok) { window.location.reload(); } else { alert("Error: " + data.detail); }
+            } catch (error) { alert("Request failed: " + error); }
         }
 
-        // --- Roll / Regenerate API Key Logic ---
         async function rollApiKey(oldApiKey) {
-            if (!confirm("⚠️ WARNING: Are you sure you want to roll this key?\n\nThis will INSTANTLY break the customer's current integration until they update their code with the new key.")) {
-                return;
-            }
-
+            if (!confirm("⚠️ WARNING: Are you sure you want to roll this key?\n\nThis will INSTANTLY break the customer's current integration until they update their code with the new key.")) { return; }
             try {
                 const response = await fetch('/admin/customers/regenerate-key', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ old_api_key: oldApiKey })
                 });
-
                 const data = await response.json();
-                
                 if (response.ok) {
                     alert("✅ Success! The old key has been destroyed.\n\nThe NEW API key is:\n\n" + data.new_api_key + "\n\nPlease copy this and send it to the client immediately.");
                     window.location.reload(); 
-                } else {
-                    alert("Error: " + data.detail);
-                }
-            } catch (error) {
-                alert("Request failed: " + error);
-            }
+                } else { alert("Error: " + data.detail); }
+            } catch (error) { alert("Request failed: " + error); }
         }
     </script>
 </body>

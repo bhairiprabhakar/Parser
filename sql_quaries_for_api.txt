@@ -62,3 +62,21 @@ ORDER BY pages_processed_this_month DESC;
 
 Your Next Move:
 Test the API out a few times using Postman or /docs. Then, check your api_requests_log table in pgAdmin. You will see every single request logged with its processing time in milliseconds!
+-----------Day 2 ---------------
+
+-- for api key request
+CREATE TABLE api_leads (
+    id SERIAL PRIMARY KEY,
+    company_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
+    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(50) DEFAULT 'Pending'
+);
+
+----------------------------
+ALTER TABLE api_requests_log ADD COLUMN file_url VARCHAR(1000);
+
+ALTER TABLE api_requests_log ADD COLUMN file_size_bytes BIGINT DEFAULT 0;
+
+ALTER TABLE api_requests_log ADD COLUMN quarantine_path VARCHAR(255) DEFAULT NULL;
