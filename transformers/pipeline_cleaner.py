@@ -9,6 +9,43 @@ try:
 except ImportError:
     _confidence_scorer = None
 
+_OCR_NOISE_RULES = [
+    (re.compile(r'(?<=\d)O(?=\d)'),           '0',   ['Amount', 'Rate', 'Qty']),
+    (re.compile(r'(?<=[A-Z])0(?=[A-Z])'),     'O',   ['Description']),
+    (re.compile(r'\bI(?=\d{3,})'),            '1',   ['Amount', 'Rate']),
+    (re.compile(r'(?<=\d)l(?=\d)'),           '1',   ['Amount', 'Rate']),
+    (re.compile(r'\bS(?=\d{3,})'),            '5',   ['Amount']),
+    (re.compile(r'\bLUPISULIDE\s*-\s*P\b', re.I),  'LUPISULIDE-P',  ['Description']),
+    (re.compile(r'\bHEPP\s+FORT\b',         re.I),  'HEPP FORT',     ['Description']),
+    (re.compile(r'\bONECLAV\s+625\b',       re.I),  'ONECLAV 625',   ['Description']),
+    (re.compile(r'\bPANTOLUP\s+DSR\b',      re.I),  'PANTOLUP DSR',  ['Description']),
+    (re.compile(r'\bLUPICEF[\s\-]*O\b',     re.I),  'LUPICEF-O',     ['Description']),
+    (re.compile(r'\bXIMECEF+\b',            re.I),  'XIMECEFF',      ['Description']),
+    (re.compile(r'\bMEDICAL\s+L\b',         re.I),  'MEDICALS',      ['StoreName']),
+    (re.compile(r'\bMEDICLS\b',             re.I),  'MEDICALS',      ['StoreName']),
+    (re.compile(r'\bDRUGSTORE\b',           re.I),  'DRUG STORE',    ['StoreName']),
+    (re.compile(r'\bMEDlCAL\b',             re.I),  'MEDICAL',       ['StoreName']),
+    (re.compile(r'(\d+\.\d{2})\s*[A-Z]{2,}$'),  r'\1', ['Amount']),
+]
+
+_KNOWN_DRUGS = {
+    'LUPISULIDE P TAB':   'LUPISULIDE-P TAB(AMB)',
+    'LUPISULIDE P GE':    'LUPISULIDE-P(GE)',
+    'LUPISULIDE P GF':    'LUPISULIDE-P(GF)',
+    'HEPP FORT SYP':      'HEPP FORT SYP',
+    'LUPICEF 0 200MG TAB':'LUPICEF-O 200MG TAB',
+    'XIMECEFF O 200 TAB': 'XIMECEFF O 200 TAB.',
+    'ONECLAV 625 TAB':    'ONECLAV 625 TAB.',
+    'PANTOLUP DSR CAP':   'PANTOLUP DSR CAP',
+    'AZILUP 250 TAB':     'AZILUP 250 TAB',
+    'AZILUP 500 TAB':     'AZILUP 500 TAB.',
+    'REVEAL KIT':         'REVEAL KIT',
+    'MEGARICH CAP':       'MEGARICH CAP',
+    'BILALUP M TAB':      'BILALUP M TAB.',
+    'CEFPOLUP 100 DRY SYP':'CEFPOLUP 100 DRY SYP',
+    'CEFPOLUP 200 TAB':   'CEFPOLUP 200 TAB.',
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  STRICT ENTITY CLEANING WRAPPERS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -93,38 +130,50 @@ def _compute_qa_flags(item: dict, store: dict = None) -> list:
 #  OCR NOISE CORRECTION (4th pass)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def apply_ocr_noise_correction(data: dict) -> dict:
-    corrections = {
-        'O': '0', 'l': '1', 'I': '1', 'S': '5',
-        'B': '8', 'Z': '2', 's': '5', 'g': '9',
-    }
-    for area in data.get("Areas", []):
-        for store in area.get("Stores", []):
-            for item in store.get("Items", []):
-                desc = item.get("Description", "")
-                if not desc:
-                    continue
-                corrected = []
-                for word in desc.split():
-                    if word[0].isupper() and len(word) > 1 and word[1:].islower():
-                        corrected.append(word)
-                        continue
-                    cleaned = ''.join(corrections.get(c, c) for c in word)
-                    corrected.append(cleaned)
-                item["Description"] = ' '.join(corrected)
-    return data
+def apply_ocr_noise_correction(value: str, field: str) -> str:
+    if not value or not isinstance(value, str):
+        return value
+    for pattern, replacement, fields in _OCR_NOISE_RULES:
+        if field in fields:
+            try:
+                value = pattern.sub(replacement, value)
+            except Exception:
+                pass
+    if field == 'Description':
+        normalised = re.sub(r'[^A-Z0-9 ]', ' ', value.upper())
+        normalised = re.sub(r'\s+', ' ', normalised).strip()
+        if normalised in _KNOWN_DRUGS:
+            value = _KNOWN_DRUGS[normalised]
+    return value.strip()
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  FLAG SUSPICIOUS ITEMS (4th pass)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def flag_suspicious_items(data: dict) -> dict:
-    for area in data.get("Areas", []):
-        for store in area.get("Stores", []):
-            for item in store.get("Items", []):
-                flags = _compute_qa_flags(item, store)
-                item['qa_flags'] = flags
-    return data
+def flag_suspicious_items(items: list) -> list:
+    flagged = []
+    for item in items:
+        flags = []
+        amt  = float(item.get('Amount', 0) or 0)
+        rate = float(item.get('Rate',   0) or 0)
+        qty  = int(item.get('Qty',      0) or 0)
+        free = int(item.get('Free',     0) or 0)
+        desc = str(item.get('Description', '') or '')
+
+        if amt <= 0:
+            flags.append('ZERO_AMOUNT')
+        if rate > 0 and amt > 0 and rate > amt:
+            flags.append('RATE_EXCEEDS_AMOUNT')
+        if len(desc.strip()) < 4:
+            flags.append('SHORT_DESC')
+        if amt > 500000:
+            flags.append('UNUSUALLY_LARGE_AMOUNT')
+        if qty == 0 and free == 0 and amt > 0:
+            flags.append('QTY_MISSING')
+
+        item['_qa_flags'] = flags
+        flagged.append(item)
+    return flagged
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  POST-PROCESSING & REPARENTING ENGINE
@@ -266,7 +315,37 @@ def post_process_extracted_data(data: dict, run_qa: bool = True) -> dict:
     # ── Enterprise 4-pass pipeline ──
     # Pass 1: clean_store_entities (already done above)
     # Pass 2: parse_items (already done above via parse_item_description)
-    data = apply_ocr_noise_correction(data)
-    if run_qa:
-        data = flag_suspicious_items(data)
+    for area in data.get("Areas", []):
+        for store in area.get("Stores", []):
+            for item in store.get("Items", []):
+                item["Description"] = apply_ocr_noise_correction(
+                    item.get("Description", ""), "Description")
+            store["StoreName"] = apply_ocr_noise_correction(
+                store.get("StoreName", ""), "StoreName")
+            store["Items"] = flag_suspicious_items(store.get("Items", []))
+
+    # Compute per-document extraction quality metrics
+    all_items = [i for area in data.get("Areas", [])
+                 for store in area.get("Stores", [])
+                 for i in store.get("Items", [])]
+
+    total_rows    = len(all_items)
+    flagged_rows  = sum(1 for i in all_items if i.get("_qa_flags"))
+    total_amt     = sum(float(i.get("Amount", 0) or 0) for i in all_items)
+    grand_total   = float(data.get("_grand_total", 0) or 0)
+    coverage_pct  = (total_amt / grand_total * 100) if grand_total > 0 else 100.0
+
+    data["_extraction_quality"] = {
+        "total_rows":        total_rows,
+        "flagged_rows":      flagged_rows,
+        "clean_rows":        total_rows - flagged_rows,
+        "total_amount":      round(total_amt, 2),
+        "grand_total":       round(grand_total, 2),
+        "coverage_pct":      round(coverage_pct, 2),
+        "qa_pass":           flagged_rows == 0 and coverage_pct >= 85.0,
+        "qa_summary":        (
+            f"{total_rows} rows | {flagged_rows} flagged | "
+            f"coverage {coverage_pct:.1f}%"
+        ),
+    }
     return data

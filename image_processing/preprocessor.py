@@ -6,90 +6,95 @@ logger = logging.getLogger(__name__)
 
 
 class AdaptivePreprocessor:
-    """Adaptive image preprocessing for OCR based on quality profile."""
+    _ROTATE_MAP = {
+        90:  cv2.ROTATE_90_COUNTERCLOCKWISE,
+        180: cv2.ROTATE_180,
+        270: cv2.ROTATE_90_CLOCKWISE,
+    }
 
-    def __init__(self, target_dpi: int = 300):
-        self.target_dpi = target_dpi
+    def process(self, image_cv: np.ndarray,
+                profile) -> np.ndarray:
+        h_orig, w_orig = image_cv.shape[:2]
 
-    def preprocess(self, image: np.ndarray, quality_profile=None) -> np.ndarray:
-        if image is None or image.size == 0:
-            return image
-        img = self._resize_to_target(image)
-        if quality_profile:
-            if "BLURRY" in (quality_profile.flags or []):
-                img = self._sharpen(img)
-            if "LOW_CONTRAST" in (quality_profile.flags or []):
-                img = self._enhance_contrast(img)
-            if "TOO_DARK" in (quality_profile.flags or []):
-                img = self._adjust_brightness(img, 1.2, 30)
-            if "TOO_BRIGHT" in (quality_profile.flags or []):
-                img = self._adjust_brightness(img, 0.8, -30)
-            if "NOISY" in (quality_profile.flags or []):
-                img = self._denoise(img)
-            if "FOLD_DETECTED" in (quality_profile.flags or []):
-                img = self._correct_fold(img)
-        else:
-            img = self._auto_enhance(img)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-        return cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        rot = getattr(profile, 'rotation_degrees', 0)
+        if rot in self._ROTATE_MAP:
+            image_cv = cv2.rotate(image_cv, self._ROTATE_MAP[rot])
+            logger.info("Rotated %d deg to upright orientation", rot)
 
-    def _resize_to_target(self, image: np.ndarray) -> np.ndarray:
-        h, w = image.shape[:2]
-        current_dpi = max(h, w) / 8.27
-        if current_dpi < self.target_dpi * 0.8:
-            scale = self.target_dpi / current_dpi
-            new_w = int(w * scale)
-            new_h = int(h * scale)
-            return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-        elif current_dpi > self.target_dpi * 1.5:
-            scale = self.target_dpi / current_dpi
-            new_w = int(w * scale)
-            new_h = int(h * scale)
-            return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        return image
+        if profile.needs_upscale:
+            scale = 1800.0 / w_orig
+            image_cv = cv2.resize(image_cv, None, fx=scale, fy=scale,
+                                  interpolation=cv2.INTER_CUBIC)
+            logger.info("Upscaled %.1fx, width=%dpx, dpi=%d",
+                        scale, int(w_orig * scale), profile.estimated_dpi)
 
-    def _sharpen(self, image: np.ndarray) -> np.ndarray:
-        kernel = np.array([[-1, -1, -1],
-                           [-1, 9, -1],
-                           [-1, -1, -1]])
-        return cv2.filter2D(image, -1, kernel)
+        angle = profile.skew_angle
+        if 0.5 < abs(angle) < 45:
+            image_cv = self._deskew(image_cv, angle)
+            logger.info("Deskewed %.2f deg", angle)
 
-    def _enhance_contrast(self, image: np.ndarray) -> np.ndarray:
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        l = clahe.apply(l)
-        return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+        gray = (cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
+                if len(image_cv.shape) == 3 else image_cv.copy())
 
-    def _adjust_brightness(self, image: np.ndarray, alpha: float = 1.0,
-                           beta: int = 0) -> np.ndarray:
-        return cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+        if getattr(profile, 'has_dark_background', False):
+            gray = cv2.bitwise_not(gray)
+            logger.info("Dark-background inversion applied")
 
-    def _denoise(self, image: np.ndarray) -> np.ndarray:
-        return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
+        if profile.has_shadow:
+            gray = self._normalize_illumination(gray)
+            logger.info("Shadow normalisation applied")
 
-    def _correct_fold(self, image: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        edges = cv2.Canny(gray, 50, 150)
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 100,
-                                minLineLength=100, maxLineGap=50)
-        if lines is not None:
-            mask = np.ones_like(gray) * 255
-            for line in lines:
-                x1, y1, x2, y2 = line[0]
-                cv2.line(mask, (x1, y1), (x2, y2), 0, 5)
-            result = cv2.inpaint(image, 255 - mask, 3, cv2.INPAINT_TELEA)
-            return result
-        return image
+        if getattr(profile, 'is_dull', False):
+            gray = self._enhance_dull(gray)
+            logger.info("Dull-page enhancement applied")
 
-    def _auto_enhance(self, image: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        blur = cv2.Laplacian(gray, cv2.CV_64F).var()
-        if blur < 15:
-            image = self._sharpen(image)
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        l = clahe.apply(l)
-        image = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
-        return image
+        if profile.is_low_contrast or profile.has_shadow:
+            clip = max(1.5, min(4.0, 80.0 / max(profile.contrast_score, 1.0)))
+            clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8))
+            gray = clahe.apply(gray)
+
+        noise = getattr(profile, 'noise_level', 0.0)
+        if noise > 0.4:
+            d = 7 if noise > 0.7 else 5
+            gray = cv2.bilateralFilter(gray, d=d,
+                                       sigmaColor=int(30 + noise * 40),
+                                       sigmaSpace=int(30 + noise * 40))
+            logger.info("Bilateral noise filter applied noise=%.2f d=%d", noise, d)
+
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+        if profile.is_blurry or profile.needs_upscale:
+            blurred = cv2.GaussianBlur(gray, (0, 0), sigmaX=2.0)
+            gray = cv2.addWeighted(gray, 2.5, blurred, -1.5, 0)
+            logger.debug("Unsharp-mask sharpening applied")
+
+        return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+    @staticmethod
+    def _deskew(image_cv: np.ndarray, angle: float) -> np.ndarray:
+        (h, w) = image_cv.shape[:2]
+        M = cv2.getRotationMatrix2D((w // 2, h // 2), -angle, 1.0)
+        return cv2.warpAffine(image_cv, M, (w, h),
+                              flags=cv2.INTER_CUBIC,
+                              borderMode=cv2.BORDER_CONSTANT,
+                              borderValue=(255, 255, 255))
+
+    @staticmethod
+    def _normalize_illumination(gray: np.ndarray) -> np.ndarray:
+        gray_f = gray.astype(np.float32) + 1.0
+        ksize = max(gray.shape[0] // 8, gray.shape[1] // 8, 31)
+        ksize = ksize + 1 if ksize % 2 == 0 else ksize
+        background = cv2.GaussianBlur(gray_f, (ksize, ksize), 0)
+        normalised = (gray_f / background) * 128.0
+        normalised = np.clip(normalised, 0, 255).astype(np.uint8)
+        return normalised
+
+    @staticmethod
+    def _enhance_dull(gray: np.ndarray) -> np.ndarray:
+        lut = np.array([
+            min(255, int(255.0 * (i / 255.0) ** 0.5))
+            for i in range(256)
+        ], dtype=np.uint8)
+        gray = cv2.LUT(gray, lut)
+        clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4, 4))
+        return clahe.apply(gray)

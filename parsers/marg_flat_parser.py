@@ -37,6 +37,52 @@ MARG_AMOUNT_LINE = re.compile(
     re.IGNORECASE
 )
 
+_MARG_FLAT_DRUG_RE = re.compile(
+    r'\b(?:HEPP\s*FORT|LUPISULIDE|LUPICEF|LUPIZYME|LUPISERA|LUPICREPE|LUPIDINE|LUPIPORE|'
+    r'ONECLAV|DEFENAC|BILALUP|REVEAL\s*KIT|CEFPOLUP|CEEPOLUP|MEGARICH|PANTOLUP|AZILUP|'
+    r'CIPROVA|XIMECEF+|FLUCALUP|SOLUBET|MULTIRICH|CANAZOLE|PILES\s*CURE|SURGICAL\s*TAPE|'
+    r'CEFFOREN|LUPIZYE|LUPIZME|HEPP)\w*',
+    re.I
+)
+_MARG_FLAT_PACK_RE = re.compile(
+    r'\b\d{1,3}\s*[*xX]\s*\d+\b'
+    r'|\b1\s*[xX]\s*\d+\s*(?:GM|ML|TAB)?\b'
+    r'|\b\d+\s*(?:ML|GM|MG|TAB|CAP|SYP|INJ)\b'
+    r'|\b\d+\s*CM\s*[xX]\s*\d+\s*MT?\b',
+    re.I
+)
+_MARG_FLAT_STORE_KW_RE = re.compile(
+    r'\b(MEDICAL|MEDICALS|MEDICOS|DRUG|PHARMA|STORE|HALL|AGENCY|HOUSE|'
+    r'ENTERPRISES?|DAWAGHAR|DANAGHAR|MEDIC)\b', re.I
+)
+_MARG_FLAT_AMT_RE  = re.compile(r'\b\d{1,7}\.\d{2}\b')
+_MARG_FLAT_AMT3_RE = re.compile(r'\b\d{1,7}\.\d{3}\b')
+
+
+def _marg_flat_fix_ocr(line: str) -> str:
+    line = re.sub(r'(\d+\.\d{2})(LOP1N|LOPIN|LUP1N|LUPIM)', r'\1\tLUPIN', line, flags=re.I)
+    line = re.sub(r'\bLOP1N\b', 'LUPIN', line, flags=re.I)
+    line = re.sub(r'\bLUP1N\b', 'LUPIN', line, flags=re.I)
+    line = re.sub(r'\bLOPIN\b', 'LUPIN', line, flags=re.I)
+    line = re.sub(r'\bLUPIM\b', 'LUPIN', line, flags=re.I)
+    line = re.sub(r'(?<=\d)B(?=\d)', '8', line)
+    line = re.sub(r'^B(?=\d)', '8', line)
+    line = re.sub(r'(\d+\.)O(\d+)', r'\g<1>0\2', line)
+    return line
+
+
+def _marg_flat_clean_num(v: str, is_int: bool = False):
+    v = str(v).strip().replace(',', '')
+    v = re.sub(r'(?<=\d)B(?=\d)', '8', v)
+    v = re.sub(r'^B(?=\d)', '8', v)
+    v = re.sub(r'[^0-9.\-]', '', v)
+    if v in ('', '.', '-', '-.'): return 0 if is_int else 0.0
+    try:
+        n = float(v)
+        return int(n) if is_int else n
+    except ValueError:
+        return 0 if is_int else 0.0
+
 
 @dataclass
 class MargStoreRow:

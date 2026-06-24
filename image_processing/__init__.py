@@ -1,7 +1,7 @@
 from .quality_analyzer import DocumentQualityAnalyzer, DocumentQualityProfile
 from .preprocessor import AdaptivePreprocessor
-from .spatial_clusterer import SpatialClusterer, TextRegion
-from .topological_aligner import TopologicalAligner, AlignmentResult
+from .spatial_clusterer import SpatialClusterer
+from .topological_aligner import TopologicalAligner
 from .confidence_scorer import ConfidenceScorer
 from .multipass_ocr import MultiPassOCR
 from .validation_engine import ValidationEngine
@@ -14,9 +14,7 @@ __all__ = [
     "DocumentQualityProfile",
     "AdaptivePreprocessor",
     "SpatialClusterer",
-    "TextRegion",
     "TopologicalAligner",
-    "AlignmentResult",
     "ConfidenceScorer",
     "MultiPassOCR",
     "ValidationEngine",

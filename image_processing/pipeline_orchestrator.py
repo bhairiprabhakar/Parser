@@ -14,7 +14,7 @@ import numpy as np
 
 from .quality_analyzer import DocumentQualityAnalyzer, DocumentQualityProfile
 from .preprocessor import AdaptivePreprocessor
-from .spatial_clusterer import SpatialClusterer, TextRegion
+from .spatial_clusterer import SpatialClusterer
 from .topological_aligner import TopologicalAligner
 from .confidence_scorer import ConfidenceScorer
 from .multipass_ocr import MultiPassOCR
@@ -38,6 +38,26 @@ try:
     from PIL import Image
 except ImportError:
     Image = None
+
+# RapidOCR lazy engine singleton
+_RAPID_ENGINE = None
+_RAPIDOCR_AVAILABLE = False
+try:
+    from rapidocr_onnxruntime import RapidOCR
+    _RAPIDOCR_AVAILABLE = True
+except ImportError:
+    pass
+
+
+def get_rapid_engine():
+    global _RAPID_ENGINE
+    if _RAPID_ENGINE is None:
+        if not _RAPIDOCR_AVAILABLE:
+            logger.error("RapidOCR not found.")
+            return None
+        logger.info("Initialising RapidOCR ONNX Engine ...")
+        _RAPID_ENGINE = RapidOCR()
+    return _RAPID_ENGINE
 
 
 class PageDewarper:
@@ -74,26 +94,24 @@ class PageDewarper:
 class EnterpriseOCRPipeline:
     """Main orchestrator for the 12-layer enterprise OCR pipeline."""
 
-    def __init__(self, use_rapid: bool = True, use_paddle: bool = True,
-                 use_table_transformer: bool = True,
-                 use_layout_parser: bool = True,
-                 lang: str = 'en', gpu: bool = False):
-        self.quality_analyzer = DocumentQualityAnalyzer()
-        self.preprocessor = AdaptivePreprocessor()
-        self.spatial_clusterer = SpatialClusterer()
-        self.topological_aligner = TopologicalAligner()
-        self.confidence_scorer = ConfidenceScorer()
-        self.ocr_engine = MultiPassOCR(use_rapid=use_rapid, use_paddle=use_paddle,
-                                       lang=lang, gpu=gpu)
-        self.validation_engine = ValidationEngine()
-        self.table_detector = AITableDetector(
-            use_table_transformer=use_table_transformer,
-            use_layout_parser=use_layout_parser,
-            device='cuda' if gpu else 'cpu'
-        )
-        self.layout_detector = AILayoutDetector()
+    def __init__(self):
+        self._analyzer = DocumentQualityAnalyzer()
+        self._preprocessor = AdaptivePreprocessor()
+        self._clusterer = SpatialClusterer()
+        self._scorer = ConfidenceScorer()
+        self._validator = ValidationEngine()
+        self._multipass = MultiPassOCR()
+        self._table_detector = AITableDetector()
+        self._layout_detector = AILayoutDetector()
         self.continuity_pass = MultiPageContinuityPass()
         self.dewarper = PageDewarper()
+        self.quality_analyzer = self._analyzer
+        self.preprocessor = self._preprocessor
+        self.spatial_clusterer = self._clusterer
+        self.topological_aligner = TopologicalAligner()
+        self.confidence_scorer = self._scorer
+        self.validation_engine = self._validator
+        self.ocr_engine = self._multipass
 
     def process_document(self, pdf_path: str, dpi: int = 300,
                          high_res_pass: bool = True) -> Dict[str, Any]:
@@ -171,32 +189,77 @@ class EnterpriseOCRPipeline:
             'tables': [],
             'quality': None
         }
-        quality = self.quality_analyzer.analyze(image)
+        quality = self._analyzer.analyze(image)
         result['quality'] = quality
-        processed = self.preprocessor.preprocess(image, quality)
-        aligned = self.topological_aligner.align(processed)
-        dewarped = self.dewarper.dewarp(aligned.aligned_image)
-        ocr_data, avg_conf = self.ocr_engine.ocr(dewarped,
-                                                   high_res_for_low_conf=high_res_pass)
-        result['ocr_data'] = ocr_data
-        regions = []
-        for data in ocr_data:
-            bbox = data['bbox']
-            confidence = self.confidence_scorer.score_text(data['text'])
-            region = TextRegion(
-                x=bbox[0], y=bbox[1], w=bbox[2], h=bbox[3],
-                text=data['text'], confidence=confidence
-            )
-            regions.append(region)
-        clustered = self.spatial_clusterer.cluster(regions, image.shape[:2])
-        detected_tables, method = self.table_detector.detect_tables(dewarped)
+        preprocessed = self._preprocessor.process(image, quality)
+        engine = get_rapid_engine()
+        if engine is None:
+            return result
+        best_text, best_conf = self._multipass.run(preprocessed, engine)
+        result['ocr_data'] = []
+        result['text'] = best_text
+        detected_tables = self._table_detector.detect(preprocessed)
         result['tables'] = detected_tables
-        lines = []
-        for cluster in clustered:
-            line_text = ' '.join(r.text for r in cluster)
-            lines.append(line_text)
-        result['text'] = '\n'.join(lines)
         return result
+
+    def extract_text(self, pil_image):
+        """Public entry point — 12-layer pipeline on a PIL Image, returns text string."""
+        engine = get_rapid_engine()
+        if engine is None:
+            return ""
+        image_cv = np.array(pil_image)
+        if len(image_cv.shape) == 3:
+            image_cv = cv2.cvtColor(image_cv, cv2.COLOR_RGB2BGR)
+        profile = self._analyzer.analyze(image_cv)
+        preprocessed = self._preprocessor.process(image_cv, profile)
+        deskew_applied = abs(profile.skew_angle) > 0.5
+        if profile.has_fold and not deskew_applied:
+            preprocessed = self.dewarper.dewarp(preprocessed)
+        best_text, best_conf = self._multipass.run(preprocessed, engine)
+        try:
+            layout_regions = self._layout_detector.detect(preprocessed, best_text)
+            filtered_text = AILayoutDetector.filter_text_to_table_region(
+                best_text, layout_regions
+            )
+            if filtered_text.strip() and len(filtered_text) >= len(best_text) * 0.3:
+                best_text = filtered_text
+        except Exception:
+            pass
+        if best_conf < 0.45:
+            logger.warning(
+                "LOW OCR CONFIDENCE (%.3f). Manual verification recommended.", best_conf
+            )
+        return best_text
+
+    def extract_text_with_validation(self, pil_image):
+        """Extended entry point returning (text, grand_total_found, confidence)."""
+        engine = get_rapid_engine()
+        if engine is None:
+            return "", 0.0, 0.0
+        image_cv = np.array(pil_image)
+        if len(image_cv.shape) == 3:
+            image_cv = cv2.cvtColor(image_cv, cv2.COLOR_RGB2BGR)
+        profile = self._analyzer.analyze(image_cv)
+        preprocessed = self._preprocessor.process(image_cv, profile)
+        deskew_applied = abs(profile.skew_angle) > 0.5
+        if profile.has_fold and not deskew_applied:
+            preprocessed = self.dewarper.dewarp(preprocessed)
+        best_text, best_conf = self._multipass.run(preprocessed, engine)
+        try:
+            layout_regions = self._layout_detector.detect(preprocessed, best_text)
+            filtered_text = AILayoutDetector.filter_text_to_table_region(
+                best_text, layout_regions
+            )
+            if filtered_text.strip() and len(filtered_text) >= len(best_text) * 0.3:
+                best_text = filtered_text
+        except Exception:
+            pass
+        grand_total = self._validator.find_grand_total(best_text)
+        return best_text, grand_total, best_conf
+
+
+# ── Module-level singleton ────────────────────────────────────────────────────
+_ENTERPRISE_PIPELINE = EnterpriseOCRPipeline()
 
 
 def _detect_format_with_regex(text: str) -> str:
@@ -251,12 +314,7 @@ def process_and_convert(pdf_path: str, output_dir: str,
         extractor_params = {}
     os.makedirs(output_dir, exist_ok=True)
     base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-    pipeline = EnterpriseOCRPipeline(
-        use_rapid=extractor_params.get('use_rapid', True),
-        use_paddle=extractor_params.get('use_paddle', True),
-        lang=extractor_params.get('lang', 'en'),
-        gpu=extractor_params.get('gpu', False)
-    )
+    pipeline = _ENTERPRISE_PIPELINE
     ocr_result = pipeline.process_document(
         pdf_path,
         dpi=extractor_params.get('dpi', 300)
@@ -273,6 +331,33 @@ def process_and_convert(pdf_path: str, output_dir: str,
                 'cells_count': len(t.cells) if hasattr(t, 'cells') else 0,
                 'confidence': t.confidence
             })
+    qp = ocr_result.get('quality_profile')
+    if qp is not None:
+        quality_score = max(0.0, min(100.0, (
+            100.0
+            - max(0.0, qp.blur_score / 2.0 if qp.is_blurry else 0.0)
+            - (10.0 if qp.has_shadow else 0.0)
+            - (15.0 if qp.is_dull else 0.0)
+            - (15.0 if qp.has_dark_background else 0.0)
+            - qp.noise_level * 30.0
+            - (5.0 if qp.needs_upscale else 0.0)
+        )))
+        quality_flags = []
+        if qp.is_blurry:
+            quality_flags.append("blurry")
+        if qp.has_shadow:
+            quality_flags.append("shadow")
+        if qp.is_dull:
+            quality_flags.append("dull")
+        if qp.has_dark_background:
+            quality_flags.append("dark_background")
+        if qp.noise_level > 0.3:
+            quality_flags.append("noisy")
+        if qp.is_low_contrast:
+            quality_flags.append("low_contrast")
+    else:
+        quality_score = 0.0
+        quality_flags = []
     output = {
         'status': ocr_result['status'],
         'file_name': base_name,
@@ -280,10 +365,8 @@ def process_and_convert(pdf_path: str, output_dir: str,
         'full_text': full_text,
         'pages': ocr_result['pages'],
         'tables': table_data,
-        'quality_score': (ocr_result['quality_profile'].overall_score
-                          if ocr_result['quality_profile'] else 0.0),
-        'quality_flags': (ocr_result['quality_profile'].flags
-                          if ocr_result['quality_profile'] else []),
+        'quality_score': quality_score,
+        'quality_flags': quality_flags,
         'metadata': ocr_result['metadata'],
         'errors': ocr_result['errors']
     }

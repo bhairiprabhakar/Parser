@@ -1,138 +1,186 @@
+from __future__ import annotations
+
 import cv2
 import numpy as np
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 import logging
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class DocumentQualityProfile:
-    blur_ratio: float = 0.0
-    skew_angle: float = 0.0
-    contrast: float = 0.0
-    brightness: float = 0.0
-    noise_level: float = 0.0
-    resolution: int = 0
-    fold_present: bool = False
-    overall_score: float = 0.0
-    flags: list = field(default_factory=list)
+    """Immutable result produced by DocumentQualityAnalyzer."""
+    __slots__ = (
+        "blur_score", "skew_angle", "contrast_score",
+        "has_shadow", "has_fold", "estimated_dpi",
+        "is_low_contrast", "is_blurry", "needs_upscale",
+        "width", "height",
+        "rotation_degrees",
+        "is_dull",
+        "noise_level",
+        "has_dark_background",
+        "text_density",
+    )
+
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+    def __repr__(self):
+        return (
+            f"<QualityProfile blur={self.blur_score:.1f} skew={self.skew_angle:.2f} "
+            f"contrast={self.contrast_score:.1f} shadow={self.has_shadow} "
+            f"fold={self.has_fold} dpi={self.estimated_dpi} "
+            f"rot={self.rotation_degrees} dull={self.is_dull} "
+            f"noise={self.noise_level:.2f} dark_bg={self.has_dark_background}>"
+        )
 
 
 class DocumentQualityAnalyzer:
-    """Pre-OCR quality assessment for document images."""
+    _BLUR_THRESHOLD = 80.0
+    _CONTRAST_THRESHOLD = 40.0
+    _SHADOW_RATIO = 1.6
+    _MIN_OCR_WIDTH = 1800
 
-    def __init__(self, blur_threshold: float = 15.0,
-                 contrast_min: float = 20.0,
-                 brightness_min: float = 30.0,
-                 brightness_max: float = 230.0,
-                 noise_threshold: float = 50.0,
-                 resolution_min: int = 150):
-        self.blur_threshold = blur_threshold
-        self.contrast_min = contrast_min
-        self.brightness_min = brightness_min
-        self.brightness_max = brightness_max
-        self.noise_threshold = noise_threshold
-        self.resolution_min = resolution_min
+    _DULL_MEAN_HIGH = 185
+    _DULL_MEAN_LOW = 80
+    _DULL_STD_THRESHOLD = 28.0
+    _NOISE_LAPLACIAN_HIGH = 600.0
+    _DARK_BG_MEAN = 100
 
-    def analyze(self, image: np.ndarray, filename: str = "") -> DocumentQualityProfile:
-        profile = DocumentQualityProfile()
-        if image is None or image.size == 0:
-            profile.flags.append("EMPTY_IMAGE")
-            profile.overall_score = 0.0
-            return profile
-        profile.blur_ratio = self._detect_blur(image)
-        profile.skew_angle = self._detect_skew(image)
-        profile.contrast = self._compute_contrast(image)
-        profile.brightness = self._compute_brightness(image)
-        profile.noise_level = self._estimate_noise(image)
-        profile.resolution = max(image.shape[0], image.shape[1])
-        profile.fold_present = self._detect_fold(image)
-        profile.flags = self._generate_flags(profile)
-        profile.overall_score = self._compute_overall(profile)
+    def analyze(self, image_cv: np.ndarray) -> DocumentQualityProfile:
+        h, w = image_cv.shape[:2]
+        gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY) if len(image_cv.shape) == 3 else image_cv.copy()
+
+        blur     = self._blur_score(gray)
+        skew     = self._detect_skew(gray)
+        contrast = self._contrast_score(gray)
+        shadow   = self._detect_shadow(gray)
+        fold     = self._detect_fold(gray)
+        dpi      = self._estimate_dpi(w, h)
+
+        rotation = self._detect_rotation(gray)
+        dull     = self._detect_dull(gray)
+        noise    = self._noise_level(gray, blur)
+        dark_bg  = self._detect_dark_background(gray)
+        text_den = self._text_density(gray)
+
+        profile = DocumentQualityProfile(
+            blur_score          = blur,
+            skew_angle          = skew,
+            contrast_score      = contrast,
+            has_shadow          = shadow,
+            has_fold            = fold,
+            estimated_dpi       = dpi,
+            is_blurry           = blur < self._BLUR_THRESHOLD,
+            is_low_contrast     = contrast < self._CONTRAST_THRESHOLD,
+            needs_upscale       = w < self._MIN_OCR_WIDTH,
+            width=w, height=h,
+            rotation_degrees    = rotation,
+            is_dull             = dull,
+            noise_level         = noise,
+            has_dark_background = dark_bg,
+            text_density        = text_den,
+        )
+        logger.info("Quality: %s", profile)
         return profile
 
-    def _detect_blur(self, image: np.ndarray) -> float:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        return cv2.Laplacian(gray, cv2.CV_64F).var()
+    @staticmethod
+    def _blur_score(gray: np.ndarray) -> float:
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
-    def _detect_skew(self, image: np.ndarray) -> float:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-        coords = np.column_stack(np.where(thresh > 0))
-        if len(coords) < 10:
-            return 0.0
-        angle = cv2.minAreaRect(coords)[-1]
-        if angle < -45:
-            angle = 90 + angle
-        return angle
-
-    def _compute_contrast(self, image: np.ndarray) -> float:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        return gray.std()
-
-    def _compute_brightness(self, image: np.ndarray) -> float:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        return gray.mean()
-
-    def _estimate_noise(self, image: np.ndarray) -> float:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        return cv2.Laplacian(gray, cv2.CV_64F).std()
-
-    def _detect_fold(self, image: np.ndarray) -> bool:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        edges = cv2.Canny(gray, 50, 150)
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 100, minLineLength=100, maxLineGap=50)
+    @staticmethod
+    def _detect_skew(gray: np.ndarray) -> float:
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        lines = cv2.HoughLines(edges, 1, np.pi / 180, 100)
         if lines is None:
-            return False
-        h, w = gray.shape
-        center_x, center_y = w // 2, h // 2
-        fold_count = 0
+            return 0.0
+        angles = []
         for line in lines:
-            x1, y1, x2, y2 = line[0]
-            mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
-            dist = np.sqrt((mid_x - center_x) ** 2 + (mid_y - center_y) ** 2)
-            length = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-            if dist < min(h, w) * 0.4 and length > min(h, w) * 0.3:
-                fold_count += 1
-        return fold_count >= 2
+            rho, theta = line[0]
+            a = np.degrees(theta) - 90
+            if abs(a) < 45:
+                angles.append(a)
+        if not angles:
+            return 0.0
+        return float(np.median(angles))
 
-    def _generate_flags(self, profile: DocumentQualityProfile) -> list:
-        flags = []
-        if profile.blur_ratio < self.blur_threshold:
-            flags.append("BLURRY")
-        if abs(profile.skew_angle) > 5:
-            flags.append(f"SKEWED_{profile.skew_angle:.1f}deg")
-        if profile.contrast < self.contrast_min:
-            flags.append("LOW_CONTRAST")
-        if profile.brightness < self.brightness_min:
-            flags.append("TOO_DARK")
-        if profile.brightness > self.brightness_max:
-            flags.append("TOO_BRIGHT")
-        if profile.noise_level > self.noise_threshold:
-            flags.append("NOISY")
-        if profile.resolution < self.resolution_min:
-            flags.append("LOW_RESOLUTION")
-        if profile.fold_present:
-            flags.append("FOLD_DETECTED")
-        return flags
+    @staticmethod
+    def _contrast_score(gray: np.ndarray) -> float:
+        return float(gray.std())
 
-    def _compute_overall(self, profile: DocumentQualityProfile) -> float:
-        score = 100.0
-        if profile.blur_ratio < self.blur_threshold:
-            score -= 20
-        if abs(profile.skew_angle) > 5:
-            score -= 10
-        if profile.contrast < self.contrast_min:
-            score -= 15
-        if profile.brightness < self.brightness_min:
-            score -= 10
-        if profile.brightness > self.brightness_max:
-            score -= 10
-        if profile.noise_level > self.noise_threshold:
-            score -= 15
-        if profile.resolution < self.resolution_min:
-            score -= 10
-        if profile.fold_present:
-            score -= 10
-        return max(0.0, score)
+    @staticmethod
+    def _detect_shadow(gray: np.ndarray) -> bool:
+        h, w = gray.shape
+        h2, w2 = h // 2, w // 2
+        tl = gray[:h2, :w2].mean()
+        br = gray[h2:, w2:].mean()
+        if br == 0:
+            return False
+        return (tl / br) > 1.6
+
+    @staticmethod
+    def _detect_fold(gray: np.ndarray) -> bool:
+        h, w = gray.shape
+        strip_w = max(w // 10, 20)
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0)
+        center = sobelx[:, w // 2 - strip_w // 2 : w // 2 + strip_w // 2]
+        left  = sobelx[:, :strip_w]
+        right = sobelx[:, -strip_w:]
+        center_var = center.var()
+        edge_var   = np.mean([left.var(), right.var()])
+        if edge_var == 0:
+            return False
+        return (center_var / edge_var) > 1.5
+
+    @staticmethod
+    def _estimate_dpi(w: int, h: int) -> int:
+        short = min(w, h)
+        return int(short / 8.27)
+
+    @staticmethod
+    def _detect_rotation(gray: np.ndarray) -> int:
+        h, w = gray.shape
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        lines = cv2.HoughLines(edges, 1, np.pi / 180, 100)
+        if lines is None:
+            return 90 if w > h * 1.3 else 0
+        near_h = 0
+        near_v = 0
+        for line in lines:
+            rho, theta = line[0]
+            a = np.degrees(theta)
+            if abs(a - 90) < 20:
+                near_h += 1
+            if abs(a) < 20 or abs(a - 180) < 20:
+                near_v += 1
+        if w > h * 1.2:
+            return 90 if near_v >= near_h else 270
+        if near_h > 0 and near_v == 0:
+            h_half = h // 2
+            top_mean = np.mean(gray[:h_half])
+            bot_mean = np.mean(gray[h_half:])
+            return 180 if bot_mean > top_mean else 0
+        return 0
+
+    @staticmethod
+    def _detect_dull(gray: np.ndarray) -> bool:
+        m = gray.mean()
+        s = gray.std()
+        return (m > 185 and s < 28) or (m < 80 and s < 28)
+
+    @staticmethod
+    def _noise_level(gray: np.ndarray, blur_score: float) -> float:
+        blur_comp = min(blur_score / 600.0, 1.0)
+        residual = np.abs(gray.astype(np.float32) - np.median(gray)).mean() / 255.0
+        return float(np.clip((blur_comp + residual) / 2.0, 0.0, 1.0))
+
+    @staticmethod
+    def _detect_dark_background(gray: np.ndarray) -> bool:
+        return float(np.median(gray)) < 100
+
+    @staticmethod
+    def _text_density(gray: np.ndarray) -> float:
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        return float(np.count_nonzero(binary)) / float(binary.size)

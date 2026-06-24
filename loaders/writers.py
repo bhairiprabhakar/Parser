@@ -13,7 +13,25 @@ except ImportError:
     pd = None
 
 # ── Clean absolute import from config.py ──
-from config import CSV_HEADERS
+CSV_HEADERS = [
+    'Agency Name', 'Agency Address', 'GSTIN',
+    'From Date', 'To Date', 'Company',
+    'Area', 'Store Name', 'Store Location', 'Description',
+    'Brand Name', 'Dosage', 'Packaging',
+    'Qty', 'Free', 'Rate', 'Amount', 'Percent',
+    'Tax Amount', 'Discount Amount', 'Doc Type',
+    'Bill Date', 'Bill No', 'Taxable', 'Tax', 'Sur Tax', 'Free Amt', 'Exempted', 'Round Off',
+    'Source File', 'Parser Format',
+    'QA Flags',
+]
+
+QA_REPORT_HEADERS = [
+    'Source File', 'Agency Name', 'Parser Format',
+    'Total Rows', 'Clean Rows', 'Flagged Rows',
+    'Total Amount', 'Grand Total', 'Coverage %',
+    'QA Pass', 'QA Summary',
+    'AI Format Tier', 'AI Format Confidence',
+]
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  OUTPUT WRITERS & MATH RECONCILIATION
@@ -51,6 +69,7 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
     r_to     = rd.get('ToDate', '')
     r_co     = rd.get('Company', '')
     
+    parser_fmt = rd.get('DetectedFormat', 'UNKNOWN_FORMAT')
     doc_type = "STATEMENT"
     doc_grand_total = data.get('_grand_total', 0.0)
     
@@ -141,27 +160,21 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
                             
                         total_extracted_value += round(amt, 2)
                             
-                        parser_format = data.get("ReportDetails", {}).get("DetectedFormat", "")
-                        qa_flags = item.get('qa_flags', [])
-                        if isinstance(qa_flags, list):
-                            qa_flags_str = '; '.join(qa_flags)
-                        else:
-                            qa_flags_str = str(qa_flags) if qa_flags else ''
+                        qa_flags = '|'.join(item.get('_qa_flags', []))
                         writer.writerow([
                             ag_name, ag_addr, ag_gstin,
                             r_from, r_to, r_co,
                             area_name, store_name, store_loc,
                             item.get('Description', ''),
-                            item.get('Brand_Name', ''), 
-                            item.get('Dosage', ''),     
-                            item.get('Packaging', ''),  
+                            item.get('Brand_Name', ''),
+                            item.get('Dosage', ''),
+                            item.get('Packaging', ''),
                             item.get('Qty', 0),
                             item.get('Free', 0),
                             item.get('Rate', 0.0),
                             amt,
                             item.get('Percent', 0.0),
                             tax_amt, disc_amt, doc_type,
-                            # ── FORMAT_27 Sales Book columns (blank for other formats) ──
                             item.get('Bill_Date', ''),
                             item.get('Bill_No', ''),
                             item.get('Taxable', ''),
@@ -171,8 +184,8 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
                             item.get('Exempted', ''),
                             item.get('Round_Off', ''),
                             source_filename,
-                            parser_format,
-                            qa_flags_str
+                            parser_fmt,
+                            qa_flags
                         ])
                         row_count += 1
 
@@ -180,31 +193,35 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
         log.error("Cannot write '%s'. Close Excel and try again.", csv_path)
         return 0.0
 
-    # ── QA sidecar report ──
+    # Write QA sidecar report
     try:
-        qa_path = _qa_report_path(csv_path)
-        flagged_items = []
-        for area in data.get("Areas", []):
-            for store in area.get("Stores", []):
-                for item in store.get("Items", []):
-                    if item.get('qa_flags'):
-                        row = {h: '' for h in CSV_HEADERS}
-                        row['Store Name'] = store.get('StoreName', '')
-                        row['Store Location'] = store.get('StoreLocation', '')
-                        row['Description'] = item.get('Description', '')
-                        row['Amount'] = item.get('Amount', 0)
-                        row['Qty'] = item.get('Qty', 0)
-                        qf = item.get('qa_flags', [])
-                        row['QA Flags'] = '; '.join(qf) if isinstance(qf, list) else str(qf)
-                        flagged_items.append(row)
-        if flagged_items:
-            with open(qa_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=CSV_HEADERS, extrasaction='ignore')
-                writer.writeheader()
-                writer.writerows(flagged_items)
-            log.info("QA report written → %s  (%d flagged items)", qa_path, len(flagged_items))
-    except Exception as e:
-        log.warning("Could not write QA sidecar report: %s", e)
+        qa = data.get("_extraction_quality", {})
+        if qa:
+            qa_path = str(csv_path).replace(".csv", "_qa_report.csv")
+            ai_result = data.get("_ai_format_result", {})
+            qa_exists = Path(qa_path).exists()
+            with open(qa_path, 'a', newline='', encoding='utf-8') as qf:
+                qwriter = csv.writer(qf)
+                if not qa_exists:
+                    qwriter.writerow(QA_REPORT_HEADERS)
+                qwriter.writerow([
+                    source_filename,
+                    data.get("AgencyDetails", {}).get("Name", ""),
+                    rd.get("DetectedFormat", ""),
+                    qa.get("total_rows", 0),
+                    qa.get("clean_rows", 0),
+                    qa.get("flagged_rows", 0),
+                    qa.get("total_amount", 0.0),
+                    qa.get("grand_total", 0.0),
+                    qa.get("coverage_pct", 0.0),
+                    "YES" if qa.get("qa_pass") else "NO",
+                    qa.get("qa_summary", ""),
+                    ai_result.get("tier", ""),
+                    ai_result.get("confidence", ""),
+                ])
+            log.info("QA report appended: %s", qa_path)
+    except Exception as qe:
+        log.warning("QA report write failed: %s", qe)
 
     log.info("CSV written → %s  (%d data rows)", Path(csv_path).resolve(), row_count)
     return total_extracted_value

@@ -78,9 +78,11 @@ def _extract_spreadsheet_text(filepath: str) -> str:
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 reader = csv.reader(f)
                 for row in reader:
-                    cells = [str(c).strip().replace('\n', ' ').replace('\r', ' ') for c in row if str(c).strip()]
-                    if cells: text_lines.append(" ".join(cells))
-                    
+                    cells = [str(c).strip().replace('\n', ' ').replace('\r', ' ')
+                             for c in row if str(c).strip()]
+                    if cells:
+                        text_lines.append("\t".join(cells))
+
         elif ext in ['.xlsx', '.xls']:
             success = False
             if pd is not None:
@@ -88,36 +90,137 @@ def _extract_spreadsheet_text(filepath: str) -> str:
                     df = pd.read_excel(filepath, header=None, dtype=str)
                     df = df.fillna("")
                     for _, row in df.iterrows():
-                        cells = [str(c).strip().replace('\n', ' ').replace('\r', ' ') for c in row if str(c).strip() and str(c).strip() != 'nan']
-                        if cells: text_lines.append(" ".join(cells))
+                        cells = [
+                            str(c).strip().replace('\n', ' ').replace('\r', ' ')
+                            for c in row
+                            if str(c).strip() and str(c).strip() != 'nan'
+                        ]
+                        if cells:
+                            text_lines.append("\t".join(cells))
                     success = True
                 except Exception as e:
-                    log.warning("Standard Excel engine failed. Attempting Universal HTML/TSV Fallback for Marg ERP...")
-            
+                    log.warning("Standard Excel engine failed (%s). Attempting Universal HTML/TSV Fallback...", e)
+
             if not success:
                 with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                    
+
                     if '<table' in content.lower():
                         content = re.sub(r'</tr>', '\n', content, flags=re.IGNORECASE)
                         content = re.sub(r'</td>', '\t', content, flags=re.IGNORECASE)
                         content = re.sub(r'<[^>]+>', '', content)
                         for line in content.split('\n'):
                             cells = [c.strip() for c in line.split('\t') if c.strip()]
-                            if cells: text_lines.append(" ".join(cells))
-                            
+                            if cells:
+                                text_lines.append("\t".join(cells))
+
                     elif '\t' in content or ',' in content:
                         f.seek(0)
                         delim = '\t' if '\t' in content else ','
                         reader = csv.reader(f, delimiter=delim)
                         for row in reader:
                             cells = [str(c).strip() for c in row if str(c).strip()]
-                            if cells: text_lines.append(" ".join(cells))
-                            
+                            if cells:
+                                text_lines.append("\t".join(cells))
+
     except Exception as e:
         log.error("Failed to read spreadsheet %s: %s", filepath, e)
-        
+
     return "\n".join(text_lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ENTERPRISE HYBRID PDF EXTRACTOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+def analyze_page_quality(text: str) -> dict:
+    if not text or not text.strip():
+        return {"char_count": 0, "num_density": 0.0, "financial_rows": 0, "table_rows": 0}
+    char_count = len(text)
+    digits_count = sum(c.isdigit() for c in text)
+    num_density = (digits_count / char_count) if char_count > 0 else 0
+    financial_pattern = r'\b\d+[\.,]\d{2}\b'
+    financial_rows = len(re.findall(financial_pattern, text))
+    lines = text.split('\n')
+    table_rows = sum(1 for line in lines if len(re.findall(r'\b\d+(?:\.\d+)?\b', line)) >= 3)
+    return {"char_count": char_count, "num_density": num_density, "financial_rows": financial_rows, "table_rows": table_rows}
+
+
+def is_weak_extraction(text: str, page_num: int) -> bool:
+    metrics = analyze_page_quality(text)
+    if metrics["char_count"] < 150:
+        return True
+    if metrics["num_density"] < 0.03:
+        return True
+    return False
+
+
+def _extract_pdf_hybrid(filepath: str) -> str:
+    final_pages_text = []
+    try:
+        with pdfplumber.open(filepath) as pdf:
+            total_pages = len(pdf.pages)
+            log.info("PDF opened successfully. Total pages: %d", total_pages)
+            for page_num_0_idx, page in enumerate(pdf.pages):
+                page_num = page_num_0_idx + 1
+                try:
+                    native_text = page.extract_text(
+                        layout=True, x_tolerance=3, y_tolerance=3) or ""
+                except Exception as exc:
+                    log.warning("pdfplumber failed on page %d: %s", page_num, exc)
+                    native_text = ""
+                if not is_weak_extraction(native_text, page_num):
+                    final_pages_text.append(native_text)
+                    continue
+                log.info("Page %d is weak/image-based. Triggering Enterprise OCR ...", page_num)
+                ocr_text = ""
+                try:
+                    from image_processing.pipeline_orchestrator import _ENTERPRISE_PIPELINE
+                    images = convert_from_path(
+                        filepath, dpi=300,
+                        first_page=page_num, last_page=page_num)
+                    if images:
+                        ocr_text, grand_total, conf = \
+                            _ENTERPRISE_PIPELINE.extract_text_with_validation(images[0])
+                        log.info("Page %d OCR done. confidence=%.3f grand_total=%.2f",
+                                 page_num, conf, grand_total)
+                        if conf < 0.55:
+                            log.info("Low confidence (%.3f) on page %d. Retrying at 400 DPI ...",
+                                     conf, page_num)
+                            try:
+                                images_hd = convert_from_path(
+                                    filepath, dpi=400,
+                                    first_page=page_num, last_page=page_num)
+                                if images_hd:
+                                    retry_text, _, retry_conf = \
+                                        _ENTERPRISE_PIPELINE.extract_text_with_validation(
+                                            images_hd[0])
+                                    if retry_conf > conf and retry_text.strip():
+                                        log.info("400 DPI retry improved confidence %.3f -> %.3f",
+                                                 conf, retry_conf)
+                                        ocr_text = retry_text
+                            except Exception as retry_exc:
+                                log.warning("400 DPI retry failed: %s", retry_exc)
+                except Exception as e:
+                    log.error("Enterprise OCR failed for page %d: %s", page_num, e)
+                final_pages_text.append(ocr_text if ocr_text.strip() else native_text)
+    except Exception as e:
+        log.error("Fatal error opening PDF %s: %s", filepath, e)
+    return "\x0c".join(final_pages_text)
+
+
+def _extract_image_enterprise(filepath: str) -> str:
+    try:
+        from PIL import Image as PILImage
+        from image_processing.pipeline_orchestrator import _ENTERPRISE_PIPELINE
+        img = PILImage.open(filepath)
+        MAX_SIDE = 2500
+        if max(img.size) > MAX_SIDE:
+            img.thumbnail((MAX_SIDE, MAX_SIDE), PILImage.Resampling.LANCZOS)
+        return _ENTERPRISE_PIPELINE.extract_text(img)
+    except Exception as e:
+        log.error("Enterprise image extraction failed: %s", e)
+        return ""
 
 
 # 🚀 B7 FIX: Thread-safe PaddleOCR Engine Loader
@@ -274,88 +377,40 @@ def _extract_image_text_paddle(filepath: str) -> str:
 def extract_raw_text(filepath: str) -> str:
     ext = Path(filepath).suffix.lower()
     if ext in ['.csv', '.xlsx', '.xls']:
-        log.info("Extracting text from Spreadsheet/OCR output (%s) …", ext)
+        log.info("Extracting text from Spreadsheet/OCR output (%s)", ext)
         return _extract_spreadsheet_text(filepath)
-        
     elif ext == '.pdf':
-        log.info("📄 Priority 1: Extracting via Native Layout Engine (pdfplumber)...")
-        text = _extract_with_pdfplumber(filepath)
-        
-        if len(text.strip()) < 100:
-            log.warning("⚠️ Native extraction yielded almost no text. This appears to be a SCANNED PDF.")
-            if _OCR_EXTRA_AVAILABLE:
-                log.info("📸 Engaging Heavy OCR (Tesseract) for scanned document...")
-                try:
-                    images = convert_from_path(filepath, dpi=300)
-                    ocr_text = ""
-                    for img in images:
-                        processed = _preprocess_image_cv2(img)
-                        ocr_text += pytesseract.image_to_string(processed, config='--oem 3 --psm 6') + "\n"
-                    text = re.sub(r'[|]', ' ', ocr_text)
-                    text = re.sub(r'\s+', ' ', text)
-                    log.info("✅ Scanned PDF OCR extraction complete.")
-                    return text
-                except Exception as e:
-                    log.error("❌ Tesseract processing failed: %s", e)
-
-            log.info("Trying enterprise OCR pipeline for scanned PDF …")
-            ent_text = extract_with_enterprise_ocr(filepath)
-            if ent_text and len(ent_text) > 50:
-                return ent_text
-            else:
-                log.warning("⚠️ Tesseract is not installed or available in PATH. Skipping Heavy OCR.")
-            
-            if _FITZ_AVAILABLE:
-                log.info("Attempting PyMuPDF raw text fallback...")
-                doc = fitz.open(filepath)
-                text = "\n".join([page.get_text("text") for page in doc])
-                doc.close()
-            elif _PDFMINER_AVAILABLE:
-                log.info("Attempting pdfminer raw text fallback...")
-                text = pdfminer_extract(filepath)
-                
-        else:
-            log.info("✅ Native text extraction successful (Extracted %d characters). Skipping heavy OCR.", len(text))
-
-        return text
-        
-    elif ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-        log.info("Extracting text via AI OCR (Paddle) …")
-        result = _extract_image_text_paddle(filepath)
+        log.info("Launching Hybrid PDF Engine (pdfplumber + Enterprise OCR)")
+        return _extract_pdf_hybrid(filepath)
+    elif ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']:
+        log.info("Running Enterprise OCR on image ...")
+        result = _extract_image_enterprise(filepath)
         if not result or len(result.strip()) < 50:
-            log.info("Paddle result low, trying enterprise OCR pipeline …")
-            ent_result = extract_with_enterprise_ocr(filepath)
-            if ent_result and len(ent_result) >= len(result):
-                return ent_result
+            log.info("Enterprise result low, trying PaddleOCR fallback ...")
+            result = _extract_image_text_paddle(filepath)
         return result
     else:
         raise ValueError(f"Unsupported file format: {ext}")
 
 
 def extract_with_enterprise_ocr(filepath: str,
-                                 use_rapid: bool = True,
-                                 use_paddle: bool = True,
                                  dpi: int = 300) -> str:
     """Extract text using the enterprise 12-layer OCR pipeline."""
     try:
-        from image_processing.pipeline_orchestrator import process_and_convert
-        import tempfile
-        tmp_dir = tempfile.mkdtemp(prefix="ent_ocr_")
-        result = process_and_convert(
-            filepath,
-            output_dir=tmp_dir,
-            extractor_params={'use_rapid': use_rapid,
-                              'use_paddle': use_paddle,
-                              'dpi': dpi}
-        )
-        import shutil
-        try:
-            shutil.rmtree(tmp_dir)
-        except Exception:
-            pass
-        if result and result.get('full_text'):
-            return result['full_text']
-        return ""
+        from image_processing.pipeline_orchestrator import _ENTERPRISE_PIPELINE
+        from PIL import Image as PILImage
+        from pdf2image import convert_from_path
+        ext = Path(filepath).suffix.lower()
+        if ext == '.pdf':
+            return _extract_pdf_hybrid(filepath)
+        elif ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff'):
+            img = PILImage.open(filepath)
+            MAX_SIDE = 2500
+            if max(img.size) > MAX_SIDE:
+                img.thumbnail((MAX_SIDE, MAX_SIDE), PILImage.Resampling.LANCZOS)
+            return _ENTERPRISE_PIPELINE.extract_text(img)
+        else:
+            return _extract_pdf_hybrid(filepath)
     except ImportError as e:
         log.warning("Enterprise OCR pipeline not available: %s", e)
         return ""

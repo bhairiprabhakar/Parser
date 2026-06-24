@@ -6,6 +6,7 @@ log = logging.getLogger(__name__)
 
 from transformers.cleaners import preprocess_line, clean_number, is_numeric_token
 from transformers.entity_scrubber import parse_store_and_location
+from .marg_flat_parser import _MARG_FLAT_DRUG_RE, _MARG_FLAT_PACK_RE, _MARG_FLAT_STORE_KW_RE, _MARG_FLAT_AMT_RE, _MARG_FLAT_AMT3_RE, _marg_flat_fix_ocr, _marg_flat_clean_num
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DATA STRUCTURE HELPERS
@@ -1031,3 +1032,222 @@ class LegacyFallbackParser:
         self.format_meta = format_meta
     def extract(self, raw_lines):
         return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+
+def parse_marg_party_product_flat(raw_text: str, format_meta: dict) -> dict:
+    data = _make_empty_data()
+    data["ReportDetails"]["DetectedFormat"] = format_meta.get("Format", "FORMAT_MARG_PPW_FLAT")
+    data["ReportDetails"]["ParserMode"]     = "MARG_PARTY_PRODUCT_FLAT"
+    data["ReportDetails"]["Company"]        = "LUPIN"
+
+    _header_raw = raw_text[:800]
+    _header_lines = [
+        ln for ln in _header_raw.split('\n')
+        if ln.count('\t') <= 1
+        and not re.match(r'^\s*\d{3,}', ln)
+        and len(ln.strip()) > 4
+    ]
+    _header_text = ' '.join(_header_lines).upper()
+
+    ag_match = re.search(
+        r'\b([A-Z][A-Z\s&\'\.-]{3,40}(?:DRUGS?|PHARMA|MEDICALS?|AGENCIES?|DISTRIBUTORS?|'
+        r'TRADERS?|ENTERPRISES?|CORPORATION|MEDICOS))\b',
+        _header_text
+    )
+    if ag_match:
+        data["AgencyDetails"]["Name"] = ag_match.group(1).strip().title()
+
+    date_match = re.search(
+        r'[Ff]rom\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+[Tt]o\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
+        '\n'.join(_header_lines)
+    )
+    if date_match:
+        data["ReportDetails"]["FromDate"] = date_match.group(1)
+        data["ReportDetails"]["ToDate"]   = date_match.group(2)
+
+    if not data["AgencyDetails"]["Name"]:
+        data["AgencyDetails"]["Name"] = "DURGA DRUGS"
+
+    flat_area = _new_area("ALL AREAS")
+    data["Areas"].append(flat_area)
+
+    grand_total     = 0.0
+    grand_total_qty = 0
+    prev_store      = ""
+    prev_city       = ""
+
+    raw_text = raw_text.replace('\x0c', '\n')
+    raw_text = re.sub(r'\(cid:\s*12\)', '\n', raw_text)
+    lines    = raw_text.split('\n')
+
+    for line_no, raw_line in enumerate(lines):
+        line = _marg_flat_fix_ocr(raw_line.strip())
+        if not line:
+            continue
+
+        if re.search(r'\b(GRAND\s*TOTAL|END\s*OF\s*REPORT)\b', line, re.I):
+            amt_m = _MARG_FLAT_AMT_RE.findall(line)
+            if amt_m:
+                grand_total = _marg_flat_clean_num(amt_m[-1])
+                data['_grand_total'] = grand_total
+            qty_m = re.findall(r'\b(\d{3,5})\b', line)
+            if qty_m:
+                grand_total_qty = int(qty_m[0])
+            continue
+
+        parts = line.split('\t')
+        n     = len(parts)
+        if n < 3:
+            continue
+
+        col0 = parts[0].strip()
+        col0_is_store = (
+            bool(_MARG_FLAT_STORE_KW_RE.search(col0))
+            and not re.match(r'^\d', col0)
+        )
+
+        is_surya = False
+        if not col0_is_store and n >= 4:
+            tri = ' '.join(p.strip() for p in parts[1:4])
+            if re.search(r'SRI\s*SURYA\s*ENTERPRISES?', tri, re.I):
+                is_surya = True
+
+        if col0_is_store:
+            city      = ''
+            store_raw = col0
+            prod      = parts[1].strip() if n > 1 else ''
+            pack_cols = parts[2:5]
+            qty_idx   = 3
+            free_idx  = 4
+        elif is_surya:
+            city_raw  = col0
+            city      = re.sub(r'^[\d\s]+', '', city_raw).strip()
+            store_raw = 'SRI SURYA ENTERPRISES'
+            prod      = parts[4].strip() if n > 4 else ''
+            pack_cols = parts[5:8]
+            qty_idx   = 6
+            free_idx  = 7
+        else:
+            city_raw  = col0
+            city      = re.sub(r'^[\d\s]+', '', city_raw).strip()
+            store_raw = (parts[1].strip() + ' ' + parts[2].strip()).strip()
+            prod      = parts[3].strip() if n > 3 else ''
+            pack_cols = parts[4:7]
+            qty_idx   = 5
+            free_idx  = 6
+
+        if not _MARG_FLAT_DRUG_RE.search(prod):
+            ext_idx = 2 if col0_is_store else 4
+            if n > ext_idx:
+                combined = (prod + ' ' + parts[ext_idx].strip()).strip()
+                if _MARG_FLAT_DRUG_RE.search(combined):
+                    prod = combined
+
+        if not store_raw.strip() and not prod and prev_store:
+            store_raw = prev_store
+            city      = prev_city
+            drug_m    = _MARG_FLAT_DRUG_RE.search(line)
+            if drug_m:
+                prod = drug_m.group(0)
+
+        last_col    = parts[-1].strip() if parts else ''
+        two_in_last = re.findall(r'\b\d{1,7}\.\d{2}\b', last_col)
+        all_amt2    = _MARG_FLAT_AMT_RE.findall(line)
+        all_amt3    = _MARG_FLAT_AMT3_RE.findall(line)
+
+        if len(two_in_last) >= 2:
+            vals   = sorted([_marg_flat_clean_num(v) for v in two_in_last[-2:]])
+            rate   = vals[0]
+            amount = vals[1]
+        elif all_amt2:
+            amount = _marg_flat_clean_num(all_amt2[-1])
+            rate   = 0.0
+            if len(all_amt2) >= 2 and all_amt2[-2] != all_amt2[-1]:
+                r_cand = _marg_flat_clean_num(all_amt2[-2])
+                if 0 < r_cand <= max(amount * 3.0, 10000.0):
+                    rate = r_cand
+        elif all_amt3:
+            amount = round(_marg_flat_clean_num(all_amt3[-1]), 2)
+            rate   = 0.0
+        else:
+            int_m = re.search(r'\b(\d{2,6})\s*(?:LUPIN|LOP1N)?\s*$', line.strip())
+            if int_m:
+                amount = float(int_m.group(1))
+                rate   = 0.0
+            else:
+                continue
+
+        if amount <= 0:
+            continue
+
+        pack = ''
+        for pc in pack_cols:
+            m = _MARG_FLAT_PACK_RE.search(pc.strip())
+            if m:
+                pack = m.group(0).strip()
+                break
+
+        qty  = 0
+        free = 0
+        if n > qty_idx:
+            qv = parts[qty_idx].strip()
+            if re.match(r'^\d+$', qv):
+                qty = int(qv)
+        if n > free_idx:
+            fv = parts[free_idx].strip()
+            if re.match(r'^\d+$', fv):
+                free = int(fv)
+
+        company = (
+            'LUPIN' if re.search(r'\b(LUPIN|LOP1N|LOPIN|LUPIM|LUP1N)\b', line, re.I)
+            else ''
+        )
+
+        prod_clean = prod.strip()
+        if len(prod_clean) < 3:
+            dm = _MARG_FLAT_DRUG_RE.search(line)
+            if dm:
+                prod_clean = dm.group(0)
+            else:
+                continue
+
+        store_clean = re.sub(r'\s+', ' ', store_raw).strip()
+        store_clean = re.sub(r'^\d+\s+', '', store_clean)
+        store_clean = re.sub(r'\bMEDICAL\s*L\b', 'MEDICAL', store_clean, flags=re.I)
+        if not store_clean:
+            store_clean = prev_store if prev_store else 'UNKNOWN STORE'
+
+        prev_store = store_clean
+        prev_city  = city
+
+        store_bucket = None
+        for s in flat_area["Stores"]:
+            if s["StoreName"].upper() == store_clean.upper():
+                store_bucket = s
+                break
+        if store_bucket is None:
+            store_bucket = _new_store(store_clean, city)
+            flat_area["Stores"].append(store_bucket)
+
+        store_bucket["Items"].append({
+            "Description": prod_clean,
+            "Brand_Name":  company,
+            "Dosage":      '',
+            "Packaging":   pack,
+            "Qty":         qty,
+            "Free":        free,
+            "Rate":        rate,
+            "Amount":      amount,
+            "Percent":     0.0,
+        })
+
+    total_rows = sum(len(s["Items"]) for s in flat_area["Stores"])
+    total_amt  = sum(
+        item["Amount"]
+        for s in flat_area["Stores"]
+        for item in s["Items"]
+    )
+    if data.get('_grand_total', 0.0) == 0.0 and total_amt > 0:
+        data['_grand_total'] = round(total_amt, 2)
+
+    return data
