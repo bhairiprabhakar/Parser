@@ -1,3 +1,5 @@
 format_id: "FORMAT_06"
 report_type: "PARTY_SALES_BOOK"
+parser_module: "parsers.legacy_machine"
+parser_class: "PartySalesParser"
 special_condition: "line_order_amount_then_store"

@@ -15,5 +15,5 @@ def clean_schema_output(data: dict) -> dict:
                     item['Packaging'] = ''
                 else:
                     parsed = parse_item_description(desc)
-                    item.update(parsed) [cite: 669]
+                    item.update(parsed)
     return data

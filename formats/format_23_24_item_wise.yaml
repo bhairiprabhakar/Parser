@@ -1,4 +1,6 @@
 format_id: "FORMAT_23_OR_24"
 report_type: "ITEM_WISE"
+parser_module: "parsers.legacy_machine"
+parser_class: "ItemWiseParser"
 fingerprint_keywords:
   require_all: ["PRODUCT CODE", "PRODUCT NAME", "PACKING", "QTY", "VALUE"]

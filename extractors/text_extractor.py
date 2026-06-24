@@ -297,6 +297,11 @@ def extract_raw_text(filepath: str) -> str:
                     return text
                 except Exception as e:
                     log.error("❌ Tesseract processing failed: %s", e)
+
+            log.info("Trying enterprise OCR pipeline for scanned PDF …")
+            ent_text = extract_with_enterprise_ocr(filepath)
+            if ent_text and len(ent_text) > 50:
+                return ent_text
             else:
                 log.warning("⚠️ Tesseract is not installed or available in PATH. Skipping Heavy OCR.")
             
@@ -316,6 +321,44 @@ def extract_raw_text(filepath: str) -> str:
         
     elif ext in ['.jpg', '.jpeg', '.png', '.bmp']:
         log.info("Extracting text via AI OCR (Paddle) …")
-        return _extract_image_text_paddle(filepath)
+        result = _extract_image_text_paddle(filepath)
+        if not result or len(result.strip()) < 50:
+            log.info("Paddle result low, trying enterprise OCR pipeline …")
+            ent_result = extract_with_enterprise_ocr(filepath)
+            if ent_result and len(ent_result) >= len(result):
+                return ent_result
+        return result
     else:
         raise ValueError(f"Unsupported file format: {ext}")
+
+
+def extract_with_enterprise_ocr(filepath: str,
+                                 use_rapid: bool = True,
+                                 use_paddle: bool = True,
+                                 dpi: int = 300) -> str:
+    """Extract text using the enterprise 12-layer OCR pipeline."""
+    try:
+        from image_processing.pipeline_orchestrator import process_and_convert
+        import tempfile
+        tmp_dir = tempfile.mkdtemp(prefix="ent_ocr_")
+        result = process_and_convert(
+            filepath,
+            output_dir=tmp_dir,
+            extractor_params={'use_rapid': use_rapid,
+                              'use_paddle': use_paddle,
+                              'dpi': dpi}
+        )
+        import shutil
+        try:
+            shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
+        if result and result.get('full_text'):
+            return result['full_text']
+        return ""
+    except ImportError as e:
+        log.warning("Enterprise OCR pipeline not available: %s", e)
+        return ""
+    except Exception as e:
+        log.error("Enterprise OCR failed: %s", e)
+        return ""

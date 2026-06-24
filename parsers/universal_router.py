@@ -1,10 +1,68 @@
 import os
 import re
 import yaml
+import json
 import logging
+import importlib
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
+try:
+    from parsers.erp_template_engine import AIFormatInferenceEngine, ERPTemplateEngine
+    _SCHEMAS_PATH = os.path.join(os.path.dirname(__file__), '..', 'format_learned_schemas.json')
+    _ai_format_inference = AIFormatInferenceEngine(schemas_path=_SCHEMAS_PATH)
+    _erp_template_engine = ERPTemplateEngine(schemas_path=_SCHEMAS_PATH)
+    _AI_AVAILABLE = True
+except ImportError:
+    _AI_AVAILABLE = False
+    _ai_format_inference = None
+    _erp_template_engine = None
+    logger.info("ERP template engine not available, running in legacy mode")
+
+# 🚀 1. BULLETPROOF MULTI-YAML LOADER (Scans the 'formats' folder)
+FORMATS_REGISTRY = {}
+_YAML_CONFIGS = []  # Keeping this for your legacy fallback logic
+
+# Find the 'formats' folder (assuming it is one level up from the parsers folder)
+current_dir = Path(__file__).parent
+formats_dir = current_dir.parent / "formats"
+
+if formats_dir.exists() and formats_dir.is_dir():
+    for yaml_file in formats_dir.glob("*.yaml"):
+        try:
+            with open(yaml_file, "r", encoding="utf-8") as file:
+                parsed_yaml = yaml.safe_load(file)
+                
+                if not parsed_yaml:
+                    continue
+                    
+                # A: Load into New Dynamic Router (if it uses the 'formats' wrapper)
+                if "formats" in parsed_yaml:
+                    FORMATS_REGISTRY.update(parsed_yaml["formats"])
+                    
+                # B: Keep appending for your Legacy Router (skip formats_config.yaml which uses keyword matching)
+                if "formats" not in parsed_yaml:
+                    _YAML_CONFIGS.append(parsed_yaml)
+                
+            logger.info(f"✅ Loaded YAML config: {yaml_file.name}")
+        except Exception as e:
+            logger.error(f"Error reading YAML from {yaml_file.name}: {e}")
+else:
+    logger.warning(f"⚠️ 'formats' directory not found at {formats_dir}. Running purely in legacy mode.")
+
+def identify_yaml_format(raw_text: str) -> str:
+    """Scores text against strict YAML rules."""
+    best_match = "UNKNOWN_FORMAT"
+    highest_score = 0
+
+    for format_name, rules in FORMATS_REGISTRY.items():
+        score = sum(1 for kw in rules.get("keywords", []) if kw in raw_text)
+        if score >= rules.get("min_matches", 999) and score > highest_score:
+            highest_score = score
+            best_match = format_name
+
+    return best_match
 
 # ── Absolute Import for Pipeline Transformers ──
 from transformers.cleaners import preprocess_line
@@ -16,14 +74,10 @@ from transformers.cleaners import preprocess_line
 def _heal_marg_csv_artifacts(raw_text: str) -> str:
     """Fixes Marg ERP's bug where CSV strings are printed onto PDFs, shattering rows vertically."""
     if '",' in raw_text or ',"' in raw_text or ',,' in raw_text:
-        # 1. Pull up lines that start with or follow a comma/quote (handling \r\n safely)
         raw_text = re.sub(r'\r?\n\s*(?=[,"])', ' ', raw_text)
         raw_text = re.sub(r'(?<=[,"])\s*\r?\n', ' ', raw_text)
-        # 2. Strip the literal quotes
         raw_text = raw_text.replace('"', ' ')
-        # 3. Collapse clustered commas
         raw_text = re.sub(r',{2,}', ' ', raw_text)
-        # 4. Turn remaining single commas into spaces (EXCEPT inside numbers like 1,000.50)
         raw_text = re.sub(r'(?<!\d),(?!\d)', ' ', raw_text)
     return raw_text
 
@@ -71,20 +125,6 @@ def _line_store_month_total_order(compact_lines: list, total_before_month: bool)
         if not total_before_month and store_pos < month_pos < total_pos: return True
     return False
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  THE YAML ROUTER ENGINE (CACHED)
-# ══════════════════════════════════════════════════════════════════════════════
-
-_YAML_CONFIGS = []
-_formats_dir = Path(__file__).parent.parent / "formats"
-if _formats_dir.exists():
-    for yf in sorted(_formats_dir.glob("*.yaml")):
-        try:
-            with open(yf, encoding='utf-8') as f:
-                _YAML_CONFIGS.append(yaml.safe_load(f))
-        except Exception as e:
-            log.warning("Failed to parse YAML %s: %s", yf.name, e)
-
 def detect_report_format(lines: list) -> dict:
     spaced, compact, compact_lines = _header_views(lines, max_lines=30)
 
@@ -92,6 +132,9 @@ def detect_report_format(lines: list) -> dict:
         return {"Format": fmt, "ReportType": parser_mode, "Reason": reason}
 
     for config in _YAML_CONFIGS:
+        # Skip formats_config.yaml (has "formats:" wrapper, uses keyword matching)
+        if "formats" in config:
+            continue
         try:
             req_all = config.get("fingerprint_keywords", {}).get("require_all", [])
             req_any = config.get("fingerprint_keywords", {}).get("require_any", [])
@@ -139,7 +182,7 @@ def detect_report_format(lines: list) -> dict:
                     
                 return found(config.get("format_id", "UNKNOWN"), report_type, "YAML: " + config.get('format_id', 'UNKNOWN'))
         except Exception as e:
-            log.warning("Failed to parse YAML Config: %s", e)
+            logger.warning("Failed to parse YAML Config: %s", e)
 
     head_text_clean = spaced
     if any(kw in head_text_clean for kw in ["QUARTERLY", "QTR", "Q1", "Q2", "Q3", "Q4", "AMT OCT", "AMT NOV", "AMT DEC"]) or \
@@ -188,10 +231,9 @@ def detect_report_format(lines: list) -> dict:
 #  THE PIPELINE ORCHESTRATOR
 # ══════════════════════════════════════════════════════════════════════════════
 
-def route_and_parse(raw_text: str, source_file: str = "") -> dict:
-    # 🚀 1. Heal the text before ANY routing or parsing happens!
-    raw_text = _heal_marg_csv_artifacts(raw_text)
-    
+# 🛑 YOUR OLD ROUTER (Renamed) 🛑
+def legacy_route_and_parse(raw_text: str, source_file: str = "") -> dict:
+    # REMOVED the healer from here, we will do it earlier!
     fmt = detect_report_format(raw_text.split('\n'))
     
     if fmt["ReportType"] in ("SCHEMA_INFERRED", "UNIVERSAL_TWO_COLUMN"):
@@ -201,7 +243,86 @@ def route_and_parse(raw_text: str, source_file: str = "") -> dict:
             if sum(len(s.get("Items",[])) for a in data.get("Areas",[]) for s in a.get("Stores",[])) > 0:
                 return data
         except Exception as e:
-            log.warning("Schema engine error: %s", e, exc_info=True)
+            logger.warning("Schema engine error: %s", e, exc_info=True)
             
     from parsers.legacy_machine import parse_text
     return parse_text(raw_text)
+
+# 🚀 THE NEW SAFE GATEWAY 🚀
+def _dynamic_parse(raw_text: str, format_config: dict, source_file: str) -> dict:
+    """Instantiate a parser from YAML config and run extraction."""
+    module_name = format_config.get("parser_module")
+    class_name = format_config.get("parser_class")
+    if not module_name or not class_name:
+        logger.warning(f"Format {format_config.get('format_id')} has no parser_module/parser_class. Falling back.")
+        return legacy_route_and_parse(raw_text, source_file)
+
+    # Normalize keys for legacy parsers that expect Format/ReportType
+    format_meta = {
+        "Format": format_config.get("format_id", format_config.get("format_name", "UNKNOWN")),
+        "ReportType": format_config.get("report_type", "UNKNOWN"),
+        "Reason": "YAML Dynamic Match",
+    }
+
+    logger.info(f"Dynamic Format [{format_meta['Format']}] for {source_file}")
+    try:
+        module = importlib.import_module(module_name)
+        ParserClass = getattr(module, class_name)
+        parser_instance = ParserClass(format_meta=format_meta)
+        raw_lines = raw_text.split('\n')
+        return parser_instance.extract(raw_lines)
+    except Exception as e:
+        logger.error(f"Dynamic Parser Failed: {e}. Falling back to legacy.")
+        return legacy_route_and_parse(raw_text, source_file)
+
+
+def route_and_parse(raw_text: str, source_file: str) -> dict:
+    """
+    Four-tier routing:
+      0. AI format inference (learned schemas from previous runs)
+      1. Strict YAML keyword match (formats_config.yaml style)
+      2. Legacy YAML fingerprint match (format_*.yaml style)
+      3. Pure legacy fallback (state machine / schema engine)
+    """
+    # 🚀 FIX: Heal the text before ANY routing or parsing happens!
+    raw_text = _heal_marg_csv_artifacts(raw_text)
+
+    # ── Tier 0: AI Format Inference ──
+    if _AI_AVAILABLE:
+        ai_format, ai_conf = _ai_format_inference.infer_format(raw_text)
+        if ai_format != "UNKNOWN" and ai_conf > 0.5:
+            logger.info(f"AI Format Inference: {ai_format} (confidence={ai_conf:.2f})")
+            from parsers.legacy_machine import parse_text
+            from parsers.universal_router import detect_report_format
+            fmt = detect_report_format(raw_text.split('\n'))
+            fmt["Format"] = ai_format
+            data = parse_text(raw_text, format_meta=fmt)
+            if _erp_template_engine:
+                schema = _erp_template_engine.get_schema(ai_format)
+                if schema:
+                    data['_erp_schema'] = schema
+            data['_ai_format'] = ai_format
+            data['_ai_confidence'] = ai_conf
+            return data
+
+    # ── Tier 1: formats_config.yaml keyword matching ──
+    format_name = identify_yaml_format(raw_text)
+    if format_name != "UNKNOWN_FORMAT":
+        config = FORMATS_REGISTRY[format_name]
+        return _dynamic_parse(raw_text, config, source_file)
+
+    # ── Tier 2: format_*.yaml fingerprint matching ──
+    lines = raw_text.split('\n')
+    fmt = detect_report_format(lines)
+    format_id = fmt.get("Format", "")
+    if format_id and not format_id.startswith("LEGACY_"):
+        # Find the matching YAML config by format_id
+        for config in _YAML_CONFIGS:
+            if config.get("format_id") == format_id:
+                # Merge detect_report_format's ReportType (may override, e.g. SUMMARY → MFR_CUSTOMER_SUMMARY)
+                merged_config = {**config, "report_type": fmt.get("ReportType", config.get("report_type", "UNKNOWN"))}
+                return _dynamic_parse(raw_text, merged_config, source_file)
+
+    # ── Tier 3: Pure legacy fallback ──
+    logger.info(f"Delegating to Legacy Router for {source_file}...")
+    return legacy_route_and_parse(raw_text, source_file)

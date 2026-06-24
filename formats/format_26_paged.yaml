@@ -2,6 +2,8 @@
 # Mapped from Format_Based_1_0.py legacy detection rules
 format_id: "FORMAT_26_PAGED_STORE_INVOICE"
 report_type: "PAGED_STORE_INVOICE"
+parser_module: "parsers.legacy_machine"
+parser_class: "PagedStoreInvoiceParser"
 
 # The script will only trigger this format if ALL of these exist in the header, 
 # PLUS at least one of the 'require_any' keywords.

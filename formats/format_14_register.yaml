@@ -2,6 +2,8 @@
 # Mapped from Format_Based_1_0.py legacy detection rules
 format_id: "FORMAT_14"
 report_type: "SALE_REGISTER_ITEMIZED"
+parser_module: "parsers.legacy_machine"
+parser_class: "RegisterParser"
 
 # The script will trigger this format if ALL of these columns are found
 fingerprint_keywords:

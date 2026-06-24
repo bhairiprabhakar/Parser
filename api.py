@@ -27,20 +27,22 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from extractors.text_extractor import extract_raw_text
+from extractors.text_extractor import extract_raw_text, extract_with_enterprise_ocr
 from parsers.universal_router import route_and_parse
 
-# ── CONFIGURATION & DIRECTORIES ──
+# ── CONFIGURATION & DIRECTORIES (from environment) ──
 DB_CONFIG = {
-    "dbname": "VSPB",
-    "user": "postgres",
-    "password": "101990",
-    "host": "localhost",
-    "port": "5432"
+    "dbname": os.environ.get("DB_NAME", "VSPB"),
+    "user": os.environ.get("DB_USER", "postgres"),
+    "password": os.environ.get("DB_PASSWORD", "101990"),
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "port": os.environ.get("DB_PORT", "5432")
 }
 
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "supersecretpassword"
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "supersecretpassword")
+
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000,http://localhost:3000").split(",")
 
 # 🚀 NEW: Quarantine Vault Directory
 QUARANTINE_DIR = "quarantine_vault"
@@ -54,10 +56,10 @@ app = FastAPI(title="Extraction API", version="1.0.0")
 # 🚀 CORS Middleware for Public SaaS APIs
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],  
-    allow_headers=["*"],  
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.state.limiter = limiter
@@ -174,7 +176,8 @@ async def extract_document(
     request: Request, 
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    x_api_key: str = Header(...)
+    x_api_key: str = Header(...),
+    x_use_enterprise_ocr: str = Header(default="false")
 ):
     start_time = time.time()
     page_count = 0
@@ -212,7 +215,13 @@ async def extract_document(
         with open(temp_filepath, "wb") as f:
             f.write(file_bytes)
 
-        raw_text = extract_raw_text(temp_filepath)
+        use_ent = x_use_enterprise_ocr.lower() in ('true', '1', 'yes')
+        if use_ent:
+            raw_text = extract_with_enterprise_ocr(temp_filepath)
+        else:
+            raw_text = extract_raw_text(temp_filepath)
+        if not raw_text or len(raw_text.strip()) < 50:
+            raw_text = extract_raw_text(temp_filepath)
         extracted_data = route_and_parse(raw_text, source_file=file.filename)
         
         if user["plan"] == "prepaid":

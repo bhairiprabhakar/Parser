@@ -1,5 +1,7 @@
 format_id: "FORMAT_05"
 report_type: "SUMMARY"
+parser_module: "parsers.legacy_machine"
+parser_class: "SummaryParser"
 fingerprint_keywords:
   require_all: ["STORE NAME", "AMOUNT"]
   exclude_any: ["QTY", "PRICE", "FREE UNITS"]

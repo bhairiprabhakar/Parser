@@ -1,3 +1,5 @@
 format_id: "FORMAT_07"
 report_type: "QUARTERLY_SUMMARY"
+parser_module: "parsers.legacy_machine"
+parser_class: "QuarterlyParser"
 special_condition: "store_month_total_order_false"

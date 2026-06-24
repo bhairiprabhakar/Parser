@@ -135,7 +135,7 @@ def _extract_agency_header(lines: list) -> tuple:
     for line in lines:
         s = line.strip()
         if not s or _is_separator(s): continue
-        gm = re.search(r'\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b', s)
+        gm = re.search(r'\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})\b', s)
         if gm: ag['GSTIN'] = gm.group(1)
         dates = re.findall(r'\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b', s)
         if len(dates) >= 2 and not rd['FromDate']: rd['FromDate'], rd['ToDate'] = dates[0], dates[-1]

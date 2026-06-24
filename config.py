@@ -49,6 +49,35 @@ _SKIP_HEADERS = frozenset([
     "customer name", "goods value", "gst amount", "proddisc amt", "cdis amt"
 ])
 
+# ── MARG flat-table patterns ──
+MARG_HEADER_PATTERNS = [
+    r'Party\s+Name\s+Product\s+Qty\s+Free\s+Rate\s+Amount',
+    r'Area\s+Party\s+Name\s+Product',
+    r'Product\s+Qty\s+Free\s+Rate\s+Amount',
+    r'Particulars?\s+Qty\s+Rate\s+Amount',
+]
+MARG_STORE_PATTERN = (
+    r'^(?:Dr\.?\s*)?'
+    r'([A-Z][A-Za-z\s]+(?:Store|Medical|Pharmacy|Agency|Trading|Corporation|Distributor|Surgicals|Mart|Enterprises|Stores)?)'
+    r'(?:\s*,\s*|\s{2,})'
+    r'([A-Za-z\s]+?(?:Road|Street|Nagar|Colony|Market|Complex|Bazaar|Chowk|Circle)?)'
+    r'(?:\s*\(?\s*([A-Za-z\s]+)\)?)?'
+)
+MARG_PRODUCT_PATTERN = (
+    r'^(.+?)\s+'
+    r'(\d+[xX]?\d*\.?\d*)\s+'
+    r'(\d+\.?\d*)\s+'
+    r'(\d+\.?\d*)\s+'
+    r'(\d+\.?\d*)'
+    r'(?:\s+(\d+\.?\d*))?'
+    r'(?:\s+(\d+\.?\d*))?'
+)
+
+# ── Format constants ──
+FORMAT_MARG_FLAT = "MARG_FLAT_TABLE"
+FORMAT_UNKNOWN = "UNKNOWN"
+FORMAT_GENERIC = "GENERIC"
+
 CSV_HEADERS = [
     'Agency Name', 'Agency Address', 'GSTIN',
     'From Date', 'To Date', 'Company',
@@ -57,5 +86,5 @@ CSV_HEADERS = [
     'Qty', 'Free', 'Rate', 'Amount', 'Percent',
     'Tax Amount', 'Discount Amount', 'Doc Type',
     'Bill Date', 'Bill No', 'Taxable', 'Tax', 'Sur Tax', 'Free Amt', 'Exempted', 'Round Off',
-    'Source File'
+    'Source File', 'Parser Format', 'QA Flags'
 ]

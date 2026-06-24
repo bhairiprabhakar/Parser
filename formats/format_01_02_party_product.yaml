@@ -1,5 +1,7 @@
 format_id: "FORMAT_01_OR_02"
 report_type: "PARTY_PRODUCT_WISE"
+parser_module: "parsers.legacy_machine"
+parser_class: "PartyProductParser"
 fingerprint_keywords:
   require_all: ["STORE NAME", "STORE LOCATION", "BRAND NAME", "QTY", "PRICE", "FREE UNITS", "AMOUNT", "DISCOUNT"]
 special_condition: "check_agency_hint_in_header"

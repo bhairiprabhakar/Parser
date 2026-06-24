@@ -1,4 +1,6 @@
 format_id: "FORMAT_04"
 report_type: "PARTY_PRODUCT_WISE"
+parser_module: "parsers.legacy_machine"
+parser_class: "PartyProductParser"
 fingerprint_keywords:
   require_all: ["STORE NAME", "QTY", "PRICE", "FREE UNITS", "AMOUNT", "DISCOUNT", "BRANDNAME"]

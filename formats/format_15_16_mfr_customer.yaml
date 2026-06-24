@@ -1,4 +1,6 @@
 format_id: "FORMAT_15_OR_16"
 report_type: "MFR_CUSTOMER_SUMMARY"
+parser_module: "parsers.legacy_machine"
+parser_class: "MfrCustomerParser"
 fingerprint_keywords:
   require_all: ["GROUP/CUSTOMER", "QTY", "FREE", "GROSS VAL", "NET VALUE"]

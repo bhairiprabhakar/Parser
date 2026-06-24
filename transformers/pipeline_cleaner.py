@@ -3,6 +3,12 @@ from config import _KW_PATTERN_REGEX, _AGENCY_PATTERN_REGEX
 from transformers.entity_scrubber import parse_store_and_location
 from transformers.item_parser import parse_item_description
 
+try:
+    from image_processing.confidence_scorer import ConfidenceScorer
+    _confidence_scorer = ConfidenceScorer()
+except ImportError:
+    _confidence_scorer = None
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  STRICT ENTITY CLEANING WRAPPERS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -40,10 +46,91 @@ def safe_clean_store_entities(data: dict) -> dict:
     return data
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  QA FLAGGING ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_qa_flags(item: dict, store: dict = None) -> list:
+    flags = []
+    desc = item.get('Description', '')
+    amount = item.get('Amount', 0)
+    if not desc or not desc.strip():
+        flags.append('MISSING_DESCRIPTION')
+    if _confidence_scorer:
+        score = _confidence_scorer.score_text(desc)
+        if score < 0.3:
+            flags.append('OCR_VERY_LOW_CONFIDENCE')
+        elif score < 0.5:
+            flags.append('OCR_LOW_CONFIDENCE')
+    try:
+        amt = float(str(amount).replace(',', ''))
+        if amt < 0:
+            flags.append('NEGATIVE_AMOUNT')
+        elif amt == 0:
+            flags.append('ZERO_AMOUNT')
+    except (ValueError, TypeError):
+        flags.append('INVALID_AMOUNT')
+    qty = item.get('Qty', 0)
+    try:
+        q = int(float(str(qty).replace(',', '')))
+        if q <= 0:
+            flags.append('ZERO_QTY')
+    except (ValueError, TypeError):
+        pass
+    rate = item.get('Rate', 0)
+    try:
+        r = float(str(rate).replace(',', ''))
+        if r > 99999:
+            flags.append('UNUSUALLY_HIGH_RATE')
+    except (ValueError, TypeError):
+        pass
+    if store:
+        s_name = store.get('StoreName', '')
+        if s_name and not re.search(r'[A-Za-z]{3,}', s_name):
+            flags.append('STORE_NAME_GARBLED')
+    return flags
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  OCR NOISE CORRECTION (4th pass)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_ocr_noise_correction(data: dict) -> dict:
+    corrections = {
+        'O': '0', 'l': '1', 'I': '1', 'S': '5',
+        'B': '8', 'Z': '2', 's': '5', 'g': '9',
+    }
+    for area in data.get("Areas", []):
+        for store in area.get("Stores", []):
+            for item in store.get("Items", []):
+                desc = item.get("Description", "")
+                if not desc:
+                    continue
+                corrected = []
+                for word in desc.split():
+                    if word[0].isupper() and len(word) > 1 and word[1:].islower():
+                        corrected.append(word)
+                        continue
+                    cleaned = ''.join(corrections.get(c, c) for c in word)
+                    corrected.append(cleaned)
+                item["Description"] = ' '.join(corrected)
+    return data
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FLAG SUSPICIOUS ITEMS (4th pass)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def flag_suspicious_items(data: dict) -> dict:
+    for area in data.get("Areas", []):
+        for store in area.get("Stores", []):
+            for item in store.get("Items", []):
+                flags = _compute_qa_flags(item, store)
+                item['qa_flags'] = flags
+    return data
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  POST-PROCESSING & REPARENTING ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def post_process_extracted_data(data: dict) -> dict:
+def post_process_extracted_data(data: dict, run_qa: bool = True) -> dict:
     for area in data.get("Areas", []):
         reparented_stores = []
         for store in area.get("Stores", []):
@@ -176,4 +263,10 @@ def post_process_extracted_data(data: dict) -> dict:
                     item["Packaging"] = parsed["Packaging"]
                     item["Description"] = parsed["Original_OCR"] 
 
+    # ── Enterprise 4-pass pipeline ──
+    # Pass 1: clean_store_entities (already done above)
+    # Pass 2: parse_items (already done above via parse_item_description)
+    data = apply_ocr_noise_correction(data)
+    if run_qa:
+        data = flag_suspicious_items(data)
     return data

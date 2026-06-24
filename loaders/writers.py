@@ -36,6 +36,10 @@ def write_json(data: dict, json_path: str) -> None:
     log.info("JSON written → %s", path.resolve())
 
 
+def _qa_report_path(csv_path: str) -> str:
+    base = os.path.splitext(csv_path)[0]
+    return base + "_qa_report.csv"
+
 def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
     ag = data.get('AgencyDetails', {})
     rd = data.get('ReportDetails', {})
@@ -65,6 +69,12 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
     if rd.get("ParserMode") == "PAGED_STORE_INVOICE" or (r_from and r_from == r_to) or has_gst_values:
         doc_type = "INVOICE"
 
+    # ── Round all amounts to 2 decimals to avoid float-drift accumulation ──
+    for item in all_extracted_items:
+        amt = item.get('Amount', 0.0)
+        if isinstance(amt, float):
+            item['Amount'] = round(amt, 2)
+
     # ── Grand Total Row Remover ──
     if len(all_extracted_items) > 1:
         last_item = all_extracted_items[-1]
@@ -75,11 +85,11 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
             last_item['IS_GRAND_TOTAL'] = True
             
     valid_items = [i for i in all_extracted_items if not i.get('IS_GRAND_TOTAL')]
-    current_csv_sum = sum(i.get('Amount', 0.0) for i in valid_items)
+    current_csv_sum = round(sum(i.get('Amount', 0.0) for i in valid_items), 2)
     
     # ── Auto-Reconciliation Engine (Rounding Adjustments) ──
     if doc_grand_total > 0 and len(valid_items) > 0:
-        difference = doc_grand_total - current_csv_sum
+        difference = round(doc_grand_total - current_csv_sum, 2)
         
         if 0.00 < abs(difference) <= 5.00:
             log.info(f"⚖️ Reconciliation: Minor gap of {difference:.2f} detected. Auto-adjusting highest row.")
@@ -129,8 +139,14 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
                         elif any(k in desc_lower or k in store_lower for k in ["discount", "disc.", "less", "disc "]):
                             disc_amt = amt
                             
-                        total_extracted_value += amt
+                        total_extracted_value += round(amt, 2)
                             
+                        parser_format = data.get("ReportDetails", {}).get("DetectedFormat", "")
+                        qa_flags = item.get('qa_flags', [])
+                        if isinstance(qa_flags, list):
+                            qa_flags_str = '; '.join(qa_flags)
+                        else:
+                            qa_flags_str = str(qa_flags) if qa_flags else ''
                         writer.writerow([
                             ag_name, ag_addr, ag_gstin,
                             r_from, r_to, r_co,
@@ -154,13 +170,41 @@ def write_csv(data: dict, csv_path: str, source_filename: str) -> float:
                             item.get('Free_Amt', ''),
                             item.get('Exempted', ''),
                             item.get('Round_Off', ''),
-                            source_filename
+                            source_filename,
+                            parser_format,
+                            qa_flags_str
                         ])
                         row_count += 1
 
     except PermissionError:
         log.error("Cannot write '%s'. Close Excel and try again.", csv_path)
         return 0.0
+
+    # ── QA sidecar report ──
+    try:
+        qa_path = _qa_report_path(csv_path)
+        flagged_items = []
+        for area in data.get("Areas", []):
+            for store in area.get("Stores", []):
+                for item in store.get("Items", []):
+                    if item.get('qa_flags'):
+                        row = {h: '' for h in CSV_HEADERS}
+                        row['Store Name'] = store.get('StoreName', '')
+                        row['Store Location'] = store.get('StoreLocation', '')
+                        row['Description'] = item.get('Description', '')
+                        row['Amount'] = item.get('Amount', 0)
+                        row['Qty'] = item.get('Qty', 0)
+                        qf = item.get('qa_flags', [])
+                        row['QA Flags'] = '; '.join(qf) if isinstance(qf, list) else str(qf)
+                        flagged_items.append(row)
+        if flagged_items:
+            with open(qa_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=CSV_HEADERS, extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(flagged_items)
+            log.info("QA report written → %s  (%d flagged items)", qa_path, len(flagged_items))
+    except Exception as e:
+        log.warning("Could not write QA sidecar report: %s", e)
 
     log.info("CSV written → %s  (%d data rows)", Path(csv_path).resolve(), row_count)
     return total_extracted_value

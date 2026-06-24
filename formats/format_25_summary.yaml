@@ -1,4 +1,6 @@
 format_id: "FORMAT_25"
 report_type: "SUMMARY"
+parser_module: "parsers.legacy_machine"
+parser_class: "SummaryParser"
 fingerprint_keywords:
   require_all: ["CUSTOMER", "STATION", "MOBILENO", "SALES VALUE"]

@@ -1,4 +1,6 @@
 format_id: "FORMAT_11"
 report_type: "SUMMARY"
+parser_module: "parsers.legacy_machine"
+parser_class: "SummaryParser"
 fingerprint_keywords:
   require_all: ["CODE", "STORENAME", "PLACE", "TOTAL"]

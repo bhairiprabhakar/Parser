@@ -45,7 +45,8 @@ def clean_number(val: str, is_int: bool = False):
         num = int(float(cleaned)) if is_int else float(cleaned)
         if abs(num) > 999_999_999.0: 
             return 0 if is_int else 0.0
-        return num
+        # Round monetary amounts to 2 decimal places to prevent float-drift
+        return round(num, 2) if not is_int else num
     except ValueError: 
         return 0 if is_int else 0.0
 
@@ -53,7 +54,6 @@ def clean_number(val: str, is_int: bool = False):
 def is_numeric_token(val: str) -> bool:
     val = str(val).strip()
     if not val: return False
-    if val in ('-', '–', '—', '−'): return True
 
     if re.search(r'\b\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?\b', val):
         return False

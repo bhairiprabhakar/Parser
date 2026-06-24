@@ -1,0 +1,17 @@
+# formats_config.yaml
+formats:
+  STANDARD_GST_INVOICE:
+    format_id: "STANDARD_GST_INVOICE"
+    report_type: "INVOICE"
+    description: "Standard Indian Pharma B2B GST Invoice"
+    min_matches: 5
+    keywords:
+      - "Sn."
+      - "Pack"
+      - "Qty."
+      - "Product"
+      - "Batch"
+      - "Exp."
+      - "HSN"
+    parser_module: "parsers.dynamic_gst_parser"
+    parser_class: "DynamicGSTInvoiceParser"

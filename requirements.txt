@@ -21,6 +21,13 @@ Pillow>=10.0.0
 
 paddlepaddle>=2.5.1
 paddleocr>=2.7.0.3
+rapidocr-onnxruntime>=1.3.20
+
+# ── Deep Learning Layout Analysis ──
+
+layoutparser>=1.0.0
+transformers>=4.36.0
+torch>=2.1.0
 
 # ── Backend & API ──
 

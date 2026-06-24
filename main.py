@@ -14,13 +14,14 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
 
 # ── Pipeline Phase Imports (Absolute) ──
-from extractors.text_extractor import extract_raw_text
+from extractors.text_extractor import extract_raw_text, extract_with_enterprise_ocr
 from parsers.universal_router import route_and_parse
 from transformers.pipeline_cleaner import post_process_extracted_data, safe_clean_store_entities
 from transformers.cleaners import clean_number, is_numeric_token
 from loaders.writers import write_json, write_csv, generate_summary_report
 
-def process_document(filepath: str, output_dir: str = ".") -> dict:
+def process_document(filepath: str, output_dir: str = ".",
+                     use_enterprise_ocr: bool = False) -> dict:
     """
     The Single Entry Point for the Pipeline.
     Can be called directly from your Dashboard backend.
@@ -46,8 +47,14 @@ def process_document(filepath: str, output_dir: str = ".") -> dict:
     # ──────────────────────────────────────────────────────────────────────────
     log.info("Step 1/4  —  Text extraction  [%s]", target_file.name)
     ext_t0 = time.time()
+    raw_text = ""
     try:
-        raw_text = extract_raw_text(str(target_file))
+        ext = target_file.suffix.lower()
+        if use_enterprise_ocr or ext in ('.jpg', '.jpeg', '.png', '.bmp', '.tiff'):
+            log.info("Using enterprise OCR pipeline for %s …", ext)
+            raw_text = extract_with_enterprise_ocr(str(target_file))
+        if not raw_text or len(raw_text.strip()) < 50:
+            raw_text = extract_raw_text(str(target_file))
     except Exception as e:
         log.error("Failed to extract text from %s: %s", target_file.name, e)
         return {
@@ -83,26 +90,18 @@ def process_document(filepath: str, output_dir: str = ".") -> dict:
         from transformers.schema_cleaner import clean_schema_output
         data = clean_schema_output(data)
 
-    # existing post-process runs after (safe for both) [cite: 665]
     data = post_process_extracted_data(data)
     data = safe_clean_store_entities(data)
     
     rd = data["ReportDetails"]
     if rd.get("ParserMode") == "PAGED_STORE_INVOICE" and data.get("_grand_total", 0.0) > 0:
-        expected_grand_total = data["_grand_total"]
+        expected_grand_total = data.get("_grand_total")
 
     if rd.get("FromDate") and not rd.get("ToDate"):
         log.info("📄 This is not a statement, it is an INVOICE copy because it doesn't have a From Date to To Date range.")
         rd["ToDate"] = rd["FromDate"]
 
     log.info("⏱️ Parsing/Logic Time: %.2f seconds", time.time() - parse_t0)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # PHASE 3: TRANSFORM & CLEAN (NLP Sanitization)
-    # ──────────────────────────────────────────────────────────────────────────
-    log.info("Step 2.5/4 — Post-processing and sanitizing extracted data ...")
-    data = post_process_extracted_data(data)
-    data = safe_clean_store_entities(data)
 
     area_count  = len(data.get("Areas", []))
     store_count = sum(len(a.get("Stores", [])) for a in data.get("Areas", []))

@@ -388,11 +388,12 @@ def _parse_header_line(line_str: str, data: dict) -> None:
 #  THE LEGACY STATE-MACHINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def parse_text(raw_text: str) -> dict:
+def parse_text(raw_text: str, format_meta: dict = None) -> dict:
     from parsers.universal_router import detect_report_format
     
     data = _make_empty_data()
-    format_meta = detect_report_format(raw_text.replace('\x0c', '\n').split('\n')[:30])
+    if format_meta is None:
+        format_meta = detect_report_format(raw_text.replace('\x0c', '\n').split('\n')[:30])
     
     if format_meta["ReportType"] == "PAGED_STORE_INVOICE":
         log.info("Auto-Detected Format: [%s] -> Parser Mode: [%s] (%s)", format_meta["Format"], format_meta["ReportType"], format_meta["Reason"])
@@ -916,6 +917,10 @@ def parse_text(raw_text: str) -> dict:
             if any(lbl in _gl.lower() for lbl in ['grand total','total value','net sales','value in rs','net amount','total:','total :','invoice value','net payable']) or re.search(r'(?i)^\s*[\d.,]+\s+total\s*$', _gl) or re.search(r'(?i)^\s*total\s+[\d.,]+\s*$', _gl):
                 _nums = [clean_number(t) for t in _gl.split() if is_numeric_token(t)]
                 if _nums:
+                    # BUG-FIX-2: Magnitude filter — ignore values > 999999 (phone numbers, page numbers, etc.)
+                    _nums = [n for n in _nums if n <= 999999]
+                    if not _nums:
+                        continue
                     _candidate = max(_nums)
                     if _candidate > _grand_total: _grand_total = _candidate
         data["_grand_total"] = _grand_total
@@ -954,3 +959,75 @@ def parse_text(raw_text: str) -> dict:
                                 store["StoreName"] = s_name
                                 break
     return data
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  WRAPPER CLASSES — one per report_type group, for dynamic YAML routing
+#  Each has the standard .extract(raw_lines) interface used by universal_router
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PagedStoreInvoiceParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_paged_store_invoice("\n".join(raw_lines), self.format_meta)
+
+class SalesBookRegisterParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_sales_book_register("\n".join(raw_lines), self.format_meta)
+
+class PartyProductParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class SummaryParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class QuarterlyParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class PartySalesParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class RegisterParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class MfrCustomerParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class ItemWiseParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class UniversalParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
+class LegacyFallbackParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
