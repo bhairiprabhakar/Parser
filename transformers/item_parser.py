@@ -27,6 +27,33 @@ def parse_item_description(raw_desc: str) -> dict:
     brand_name = re.sub(r'[^A-Za-z0-9\s]', ' ', brand_name) 
     brand_name = re.sub(r'\s{2,}', ' ', brand_name).strip().upper() 
 
+    _noise_words = frozenset({
+        "EXP", "EXPT", "EXPD", "EXPIRY", "QTY", "QUANTITY", "MFG", "MFR", "MNF", "MNP",
+        "BATCH", "BAT", "BATNO", "BATCHNO", "BNO",
+        "MESSAGE", "MSG", "SMS", "MESS",
+        "NRP", "MRP", "RATE", "AMOUNT", "AMT",
+        "DISC", "DISCOUNT", "GST", "CESS",
+        "ED", "SURCHARGE", "TOTAL",
+        "FR", "FREE", "TAXABLE", "TAX",
+        "SGST", "CGST", "IGST",
+        "ROUND", "ROUNDED", "ROUNDOFF",
+        "NET", "GROSS",
+        "SL", "SR", "CODE", "HSN",
+    })
+    _keep_suffix = frozenset({
+        "TAB", "CAP", "INJ", "SYP", "DROP", "GEL", "OIN", "LOT",
+        "CRM", "SPR", "NAS", "SUS", "PWD", "SOL", "CREAM",
+    })
+    tokens = brand_name.split()
+    cleaned = [t for t in tokens if t not in _noise_words]
+    while len(cleaned) >= 2 and len(cleaned[-1]) <= 4 and cleaned[-1].isalpha() and cleaned[-1].isupper():
+        if cleaned[-1] in _keep_suffix:
+            break
+        cleaned.pop()
+    brand_name = " ".join(cleaned)
+
+    brand_name = re.sub(r'\s{2,}', ' ', brand_name).strip() 
+
     return {
         "Brand_Name": brand_name,
         "Dosage": dosage,

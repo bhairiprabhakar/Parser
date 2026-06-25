@@ -25,6 +25,9 @@ _OCR_NOISE_RULES = [
     (re.compile(r'\bMEDICLS\b',             re.I),  'MEDICALS',      ['StoreName']),
     (re.compile(r'\bDRUGSTORE\b',           re.I),  'DRUG STORE',    ['StoreName']),
     (re.compile(r'\bMEDlCAL\b',             re.I),  'MEDICAL',       ['StoreName']),
+    (re.compile(r'\bNTERPRISES?\b',         re.I),  'ENTERPRISES',   ['StoreName', 'StoreLocation']),
+    (re.compile(r'\bICAL\b',                re.I),  'MEDICAL',       ['StoreName']),
+    (re.compile(r'\bMEDCLS?\b',             re.I),  'MEDICALS',      ['StoreName']),
     (re.compile(r'(\d+\.\d{2})\s*[A-Z]{2,}$'),  r'\1', ['Amount']),
 ]
 
@@ -273,6 +276,19 @@ def post_process_extracted_data(data: dict, run_qa: bool = True) -> dict:
                     desc = re.sub(r'^\s*\d{1,4}[\.\)\-]+\s+', '', desc)
                     if re.match(r'^\s*\d{1,3}\s+[A-Za-z]', desc) and not re.match(r'^\s*(24|3D|5D|A2Z|B12|A\s*2\s*Z)\b', desc, re.IGNORECASE):
                         desc = re.sub(r'^\s*\d{1,3}\s+', '', desc)
+
+                    desc = re.sub(
+                        r'^(?:\s*(?:EXP(?:IRY)?\.?\s*|MFG\.?\s*|BATCH(?:\.?\s*NO\.?)?\s*|'
+                        r'HSN(?:\s*CODE)?\.?\s*|GSTIN?\s*|MRP\.?\s*|RATE\.?\s*|'
+                        r'QTY\.?\s*|FREE\.?\s*|AMOUNT\.?\s*|AMT\.?\s*|DISC(?:OUNT)?\.?\s*|'
+                        r'FR(?:EE)?\.?\s*|TAX(?:ABLE)?\.?\s*|'
+                        r'SGST\.?\s*|CGST\.?\s*|IGST\.?\s*|'
+                        r'NET\.?\s*|GROSS\.?\s*|TOTAL\.?\s*|ROUND(?:ED)?(?:\s+OFF)?\.?\s*|'
+                        r'CODE\.?\s*|NO\.?\s*|SL\.?\s*|SR\.?\s*|'
+                        r'[A-Z]{1,3}\s*\d{1,2}\s*%)+)+',
+                        '', desc
+                    ).strip()
+                    desc = re.sub(r'\s{2,}', ' ', desc).strip()
 
                     desc = re.sub(r'[*.\-=,]{2,}', ' ', desc)
                     desc = re.sub(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b', ' ', desc)

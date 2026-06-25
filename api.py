@@ -7,6 +7,7 @@ import json
 import secrets
 import uuid
 import shutil
+import traceback
 import psycopg2
 from datetime import datetime
 from pydantic import BaseModel
@@ -29,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from extractors.text_extractor import extract_raw_text, extract_with_enterprise_ocr
 from parsers.universal_router import route_and_parse
+from transformers.pipeline_cleaner import post_process_extracted_data, safe_clean_store_entities
 
 # ── CONFIGURATION & DIRECTORIES (from environment) ──
 DB_CONFIG = {
@@ -223,6 +225,8 @@ async def extract_document(
         if not raw_text or len(raw_text.strip()) < 50:
             raw_text = extract_raw_text(temp_filepath)
         extracted_data = route_and_parse(raw_text, source_file=file.filename)
+        extracted_data = post_process_extracted_data(extracted_data)
+        extracted_data = safe_clean_store_entities(extracted_data)
         
         if user["plan"] == "prepaid":
             cursor.execute("""
@@ -263,6 +267,7 @@ async def extract_document(
         
     except Exception as e:
         process_time_ms = int((time.time() - start_time) * 1000)
+        traceback.print_exc()
         
         # 🚀 QUARANTINE VAULT LOGIC (For 500 Crashes)
         if temp_filepath and os.path.exists(temp_filepath):

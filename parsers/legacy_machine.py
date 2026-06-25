@@ -9,6 +9,33 @@ from transformers.entity_scrubber import parse_store_and_location
 from .marg_flat_parser import _MARG_FLAT_DRUG_RE, _MARG_FLAT_PACK_RE, _MARG_FLAT_STORE_KW_RE, _MARG_FLAT_AMT_RE, _MARG_FLAT_AMT3_RE, _marg_flat_fix_ocr, _marg_flat_clean_num
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  PRE-PARSE OCR NOISE CORRECTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+_OCR_STORE_NAME_FIXES = [
+    # Leading-letter truncation (common when text is near image edge)
+    (re.compile(r'\bNTERPRISES?\b', re.I), 'ENTERPRISES'),
+    (re.compile(r'\bNTERPRI(S|Z)E?S?\b', re.I), 'ENTERPRISES'),
+    # MEDICAL truncations
+    (re.compile(r'\bICAL\b', re.I), 'MEDICAL'),
+    (re.compile(r'\bMEDICLS\b', re.I), 'MEDICALS'),
+    (re.compile(r'\bMEDCLS?\b', re.I), 'MEDICALS'),
+    (re.compile(r'\bMEDL\b', re.I), 'MEDICAL'),
+    # PHARMA truncations
+    (re.compile(r'\bPHARMAA\b', re.I), 'PHARMA'),
+    (re.compile(r'\bPHRM\b', re.I), 'PHARMA'),
+    # AGENCY truncations
+    (re.compile(r'\bAGENC(Y|IES)\b', re.I), 'AGENCY'),
+    # DISTRIBUTOR truncations
+    (re.compile(r'\bDISTRIBUTERS?\b', re.I), 'DISTRIBUTOR'),
+]
+
+def _summary_fix_ocr(text: str) -> str:
+    for pattern, replacement in _OCR_STORE_NAME_FIXES:
+        text = pattern.sub(replacement, text)
+    return text
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  DATA STRUCTURE HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -376,6 +403,11 @@ def _parse_header_line(line_str: str, data: dict) -> None:
     skip_words = ["report for", "party/item", "area / item", "page", "sale summary", "party wise", "company:", "sales analysis", "all parties", "quarterly", "amount name", "amount n a m e"]
     if any(skip in lower_line for skip in skip_words): return 
 
+    # Strip "To, ..." (store/customer name) from address lines
+    line_str = re.sub(r'(?i)\s*\bto\s*,.*$', '', line_str).strip()
+    if not line_str:
+        return
+
     if not (rd["FromDate"] or rd["Company"] or any(x in line_str.upper() for x in ["REPORT FOR", "SALE SUMMARY", "SALE REGISTER", "SALES REGISTER"])):
         new_addr = line_str.strip()
         if new_addr and new_addr not in ag["Address"]:
@@ -415,7 +447,7 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
     lines = raw_text.split('\n')
     
     if not data["AgencyDetails"]["Name"]:
-        for l in lines[:5]:
+        for l in lines[:20]:
             l_clean = l.strip()
             l_no_spaces = l_clean.replace(" ", "").upper()
             if (not l_clean or l_clean.startswith('---') or len(l_clean) <= 3 or re.search(r'PAGE|REPORT|SUMMARY|STATEMENT|PARTY|ITEM|DATE|DL NO|GSTIN|CINEMA HOUSE|CUSTOMER|AREA', l_clean, re.IGNORECASE)): continue
@@ -431,6 +463,7 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                 ag_name = re.sub(r'\b20\d{2}[-/]\d{2,4}\b', '', ag_name)
                 ag_name = re.sub(r'\b\d{2}[-/]\d{2}\b', '', ag_name)
                 ag_name = re.sub(r'\b\d{2}\b$', '', ag_name).strip(" -:,")
+                ag_name = re.sub(r'(?i)\s*(?:tax\s*invoice|tax\s*inv\.?|invoice|inv\.?|cash\s*memo|bill\s*of\s*supply)\s*$', '', ag_name).strip()
                 if re.search(r'[A-Za-z]{3,}', ag_name):
                     data["AgencyDetails"]["Name"] = ag_name
                     break
@@ -454,8 +487,8 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
             lower = line_str.lower()
             
             if report_type == "INVOICE_SINGLE_PARTY":
-                if any(x in lower for x in ["m/s ", "m/s.", "m/s:", "customer :", "party name:"]):
-                    store_name_raw = re.sub(r'(?i)^.*?(m/s\.?|customer\s*:|party name:)\s*[:\-]?\s*', '', line_str)
+                if any(x in lower for x in ["m/s ", "m/s.", "m/s:", "customer :", "party name:", "to,", "to :"]):
+                    store_name_raw = re.sub(r'(?i)^.*?(m/s\.?|customer\s*:|party name:|to\s*[,:])\s*(?:m/s\.?\s*)?', '', line_str)
                     store_name_raw = re.split(r'(?i)\badd\s*:', store_name_raw)[0]
                     s_name, s_loc = parse_store_and_location(store_name_raw.strip())
                     
@@ -472,6 +505,22 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                                 current_area["Stores"].append(current_store)
                                 table_started = False
             
+            # Generic "To" store name detection for all report types (accepts comma, colon, or space after "to")
+            if current_store["StoreName"] == "UNKNOWN STORE" and re.search(r'(?i)\bto\s*[,:\s]', line_str):
+                _store_raw = re.sub(r'(?i)^.*?\bto\s*[,:\s]+\s*(?:m/s\.?\s*)?', '', line_str)
+                _store_raw = re.split(r'(?i)\b(add\s*:|invoice|date|dl no|gstin|mob|ph)\b', _store_raw)[0]
+                _s_name, _s_loc = parse_store_and_location(_store_raw.strip())
+                if _s_name:
+                    current_store["StoreName"], current_store["StoreLocation"] = _s_name, _s_loc
+            
+            # Generic store name fallback for all formats: scan lines that look like store entries
+            if current_store["StoreName"] == "UNKNOWN STORE" and ',' in line_str:
+                if not re.match(r'^\d', line_str) and re.search(r'\b[A-Z][a-z]', line_str) and len(line_str) < 80:
+                    if bool(re.search(_KW_PATTERN_REGEX, line_str)):
+                        _s_name, _s_loc = parse_store_and_location(line_str.strip())
+                        if _s_name and _s_name.upper() != "UNKNOWN STORE":
+                            current_store["StoreName"], current_store["StoreLocation"] = _s_name, _s_loc
+            
             trigger_keywords = ["DESCRIPTION", "TOTALVALUE", "NAMEOFTHEPARTY", "PARTY/CUSTOMER", "AMOUNTNAME", "ACCOUNTDETAILS", "PRODUCTNAME", "PAERIES", "NETAMOUNT", "PARTYNAME", "SALEPR", "GROUP/CUSTOMER", "GROSSVAL", "NETVALUE", "HSNCODE", "SLITEM", "PRODUCTBATCH", "PACKQTY", "HSNMRP", "PRODUCT", "HSN", "MRP", "BATCH", "EXP.", "STORENAME", "STORELOCATION", "BRANDNAME", "FREEUNITS", "DISCOUNT", "BILLNO", "INVOICENO", "INVOICEDATE", "NETTSALEAMT", "AVGPRICE", "NOOFVCH", "TAXPAYABLE", "DRCR", "SALEAMT", "SALAMT", "SALENET", "SALESVALUE", "MOBILENO", "GOODSVALUE", "GSTAMOUNT", "PRODDISC", "CDISAMT", "FREEAMOUNT", "PACKS", "PACKING"]
             if any(x in cleaned_line for x in trigger_keywords):
                 log.info("Table sentinel found — switching to TABLE mode.")
@@ -485,7 +534,7 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
 
         if re.match(r'^page\s*[:\-]?\s*\d+', lower) or "page no" in lower:
             pending_text, pending_summary_val, expecting_store_header = "", None, True
-            if report_type in ["INVOICE_SINGLE_PARTY", "SALE_REGISTER_ITEMIZED", "CUSTOMER_PRODUCT_SALES"]: table_started = False 
+            if report_type in ["INVOICE_SINGLE_PARTY", "SALE_REGISTER_ITEMIZED", "PARTYWISE_SALE_REGISTER", "CUSTOMER_PRODUCT_SALES"]: table_started = False 
             continue
             
         if "netamount" in lower or ("town" in lower and "name" in lower) or "net amount" in lower:
@@ -497,6 +546,10 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
         if agency_name and len(agency_name) > 3: skip_set = skip_set | {agency_name.lower()}
         if any(h in lower for h in skip_set) and not any(kw in lower for kw in ["paeries"]):
             pending_text = "" 
+            continue
+
+        if re.match(r'(?i)\s*(message|msg|sms|mess)\s*:', line_str):
+            pending_text = ""
             continue
             
         tokens = line_str.split()
@@ -559,8 +612,15 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
         is_store_header, raw_sname_header = False, ""
         
         if report_type not in ["PARTY_SALES_BOOK"]:
-            if is_phantom_header:
-                raw_sname_header, is_store_header = inline_desc, True
+            if table_started:
+                pass  # already in table mode — no new stores
+            elif is_phantom_header:
+                _lower_l = line_str.lower()
+                _footer_kw = ["software by", "customer care", "authorised signatory",
+                              "e.&o.e", "page 1 of", "e.& o.e", "computerised",
+                              "computerise your", "www.", ".com", "powered by"]
+                if not any(kw in _lower_l for kw in _footer_kw):
+                    raw_sname_header, is_store_header = inline_desc, True
             elif any(x in lower for x in ["customer :", "customer:", "customer "]):
                 if not any(x in lower for x in ["company", "product", "sales"]):
                     store_name_raw = re.sub(r'(?i)^.*?(customer)\s*[:\-]?\s*', '', line_str)
@@ -573,18 +633,42 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                     store_name_raw = re.sub(r'\[.*?\]', '', store_name_raw)
                     store_name_raw = re.split(r'(?i)\b(add\s*:|invoice|date|dl no|gstin|mob|ph)\b', store_name_raw)[0]
                     raw_sname_header, is_store_header = store_name_raw.strip(), True
+            elif re.search(r'(?i)\bto\s*,\s*(?:m/s\.?\s*)?', line_str):
+                store_name_raw = re.sub(r'(?i)^.*?\bto\s*,\s*(?:m/s\.?\s*)?', '', line_str)
+                store_name_raw = re.sub(r'\[.*?\]', '', store_name_raw)
+                store_name_raw = re.split(r'(?i)\b(add\s*:|invoice|date|dl no|gstin|mob|ph)\b', store_name_raw)[0]
+                raw_sname_header, is_store_header = store_name_raw.strip(), True
             elif bool(re.search(_KW_PATTERN_REGEX, line_str.upper())):
                 has_store_identifier = any(x in lower for x in ["dl no", "dl.no", "gstin", "retailer"])
                 if n == 0 or has_store_identifier:
                     if not any(kw in lower for kw in ["paeries", "sale data", "total", "amount", "qty"]):
-                        raw_sname_header = line_str.strip()
-                        raw_sname_header = re.sub(r'(?i)^(?:umber|number)?\s*date\s*[a-z]*\s*', '', raw_sname_header)
-                        raw_sname_header = re.split(r'(?i)\b(add\s*:|invoice|date|dl no|gstin|mob|ph)\b', raw_sname_header)[0]
-                        is_store_header = True
+                        # When n==0 and line has only a ROOTS keyword (MEDICAL, PHARMA, etc.)
+                        # but no SUFFIX (HALL, STORE, MART) or AGENCY keyword, don't create a
+                        # store header — the ROOTS-only text may be the first part of a multi-word
+                        # store name split across OCR lines (e.g. "ASHMA MEDICAL\nHALL 1234.56").
+                        if n == 0 and not has_store_identifier:
+                            _upper_line = line_str.upper()
+                            _has_suffix_or_agency = bool(re.search(
+                                r'\b(?:STORES?|MART|HALL|POINT|CENT(?:ER|RE)|DEPOT|CORNER|HUB|NETWORK|'
+                                r'BHANDAR|KENDRA|PALACE|SHOP|AGENC(?:Y|IES)|TRADERS?|TRADING|'
+                                r'DISTRIBUTORS?|ENTERPRISES?|CORPORATION|SUPPLIERS?|BROTHERS|BROS|'
+                                r'ASSOCIATES?|SERVICES?|COMPANY)\b', _upper_line))
+                            if not _has_suffix_or_agency:
+                                pass  # let it fall through to report-specific handler
+                            else:
+                                raw_sname_header = line_str.strip()
+                                raw_sname_header = re.sub(r'(?i)^(?:umber|number)?\s*date\s*[a-z]*\s*', '', raw_sname_header)
+                                raw_sname_header = re.split(r'(?i)\b(add\s*:|invoice|date|dl no|gstin|mob|ph)\b', raw_sname_header)[0]
+                                is_store_header = True
+                        else:
+                            raw_sname_header = line_str.strip()
+                            raw_sname_header = re.sub(r'(?i)^(?:umber|number)?\s*date\s*[a-z]*\s*', '', raw_sname_header)
+                            raw_sname_header = re.split(r'(?i)\b(add\s*:|invoice|date|dl no|gstin|mob|ph)\b', raw_sname_header)[0]
+                            is_store_header = True
             elif line_str.startswith('-') and n == 0 and len(line_str.strip('- ')) > 2:
                 if report_type not in ["SUMMARY", "QUARTERLY_SUMMARY", "SALES_ANALYSIS_SUMMARY", "CUSTOMER_PRODUCT_SALES", "UNIVERSAL_TWO_COLUMN", "MFR_CUSTOMER_SUMMARY"]:
                     raw_sname_header, is_store_header = line_str.strip('- '), True
-            elif report_type in ["PARTY_WISE", "SALE_REGISTER_ITEMIZED"] and expecting_store_header and n == 0 and re.search(r'[A-Za-z]', line_str):
+            elif report_type in ["PARTY_WISE", "SALE_REGISTER_ITEMIZED", "PARTYWISE_SALE_REGISTER"] and expecting_store_header and n == 0 and re.search(r'[A-Za-z]', line_str):
                 raw_sname_header, is_store_header = line_str.strip(), True
 
         if is_store_header:
@@ -628,7 +712,7 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                 pending_text = ""
                 continue
             else:
-                pending_text = (pending_text + " " + line_str).strip()
+                pending_text = _summary_fix_ocr((pending_text + " " + line_str).strip())
                 continue
 
         if report_type == "SALE_REGISTER_ITEMIZED":
@@ -637,6 +721,27 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                 expecting_store_header = False 
                 while len(numeric_stack) > 5: inline_desc += " " + numeric_stack.pop(0)
                 combined_desc = (pending_text + " " + inline_desc).strip()
+                current_store["Items"].append(_new_item(combined_desc, numeric_stack, has_date=True))
+                pending_text = ""
+            else:
+                if n >= 1: pending_text = ""
+                else: pending_text = (pending_text + " " + line_str).strip()
+            continue
+
+        if report_type == "PARTYWISE_SALE_REGISTER":
+            has_date = bool(re.search(r'\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b', raw_line))
+            if not has_date and n == 0 and re.search(r'[A-Za-z]', line_str) and ',' in line_str and len(line_str) > 5:
+                if bool(re.search(_KW_PATTERN_REGEX, line_str.upper())):
+                    s_name, s_loc = parse_store_and_location(line_str)
+                    if s_name:
+                        current_store = _new_store(s_name, s_loc)
+                        current_area["Stores"].append(current_store)
+                        pending_text = ""
+                        continue
+            if has_date and n >= 1:
+                expecting_store_header = False 
+                while len(numeric_stack) > 5: inline_desc += " " + numeric_stack.pop(0)
+                combined_desc = re.sub(r'^\s*\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\s+\S+\s+', '', inline_desc.strip())
                 current_store["Items"].append(_new_item(combined_desc, numeric_stack, has_date=True))
                 pending_text = ""
             else:
@@ -674,6 +779,7 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
             if re.match(r'^\d+\.', tokens[0]) and n >= 1:
                 total_val = numeric_stack[-1]
                 raw_sname = re.sub(r'^\d+\.', '', combined_desc.strip()).strip()
+                raw_sname = _summary_fix_ocr(raw_sname)
                 s_name, s_loc = parse_store_and_location(raw_sname)
                 if s_name:
                     current_store = _new_store(s_name, s_loc)
@@ -717,12 +823,12 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
         if report_type == "PARTY_SALES_BOOK":
             is_entry, curr_amt, curr_name = False, None, ""
             if is_numeric_token(tokens[0]) and not re.match(r'^\d+$', line_str.replace(" ", "")):
-                is_entry, curr_amt, curr_name = True, tokens[0], " ".join(tokens[1:])
+                is_entry, curr_amt, curr_name = True, tokens[0], _summary_fix_ocr(" ".join(tokens[1:]))
             elif n == 0 and bool(re.search(_KW_PATTERN_REGEX, line_str.upper())):
-                is_entry, curr_amt, curr_name = True, "0", line_str
+                is_entry, curr_amt, curr_name = True, "0", _summary_fix_ocr(line_str)
             if is_entry:
                 if pending_summary_val is not None:
-                    s_name, s_loc = parse_store_and_location(pending_text.strip())
+                    s_name, s_loc = parse_store_and_location(_summary_fix_ocr(pending_text.strip()))
                     if re.search(r'[A-Za-z]', s_name):
                         current_store = _new_store(s_name, s_loc)
                         current_area["Stores"].append(current_store)
@@ -741,7 +847,8 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                 if co_name:
                     co_first_word = co_name.split()[0]
                     if len(co_first_word) > 2: raw_sname = re.sub(r'(?i)^' + re.escape(co_first_word) + r'\b\s*', '', raw_sname).strip()
-                raw_sname = re.sub(r'^\d+[\.\-]?\s+', '', re.sub(r'(?i)^LUPIN\b\s*', '', raw_sname).strip()).strip()
+                raw_sname = re.sub(r'^\d+[\.\-]?\s+', '', raw_sname.strip()).strip()
+                raw_sname = _summary_fix_ocr(raw_sname)
                 s_name, s_loc = parse_store_and_location(raw_sname)
                 if not re.search(r'[A-Za-z]', s_name):
                     pending_text = ""
@@ -757,7 +864,7 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                     if co_name:
                         co_first_word = co_name.split()[0]
                         if len(co_first_word) > 2: raw_sname = re.sub(r'(?i)^' + re.escape(co_first_word) + r'\b\s*', '', raw_sname).strip()
-                    raw_sname = re.sub(r'(?i)^LUPIN\b\s*', '', raw_sname).strip()
+                    raw_sname = _summary_fix_ocr(raw_sname)
                     s_name, s_loc = parse_store_and_location(raw_sname)
                     current_store = _new_store(s_name, s_loc)
                     current_area["Stores"].append(current_store)
@@ -784,6 +891,7 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                 raw_sname = re.sub(r'[\d.,\-\s]+$', '', combined_desc.strip()).strip()
                 raw_sname = re.sub(r'^\d+[\.\-:]?\s*', '', raw_sname).strip()
                 raw_sname = re.sub(r':(?=[A-Za-z])', ' - ', raw_sname)
+                raw_sname = _summary_fix_ocr(raw_sname)
                 s_name, s_loc = parse_store_and_location(raw_sname)
                 if not re.search(r'[A-Za-z]', s_name):
                     pending_text = ""
@@ -794,7 +902,8 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                 pending_text = ""
             else:
                 if len(pending_text) > 80 and len(line_str) > 3:
-                    s_name, s_loc = parse_store_and_location(pending_text.strip())
+                    pending_text = _summary_fix_ocr(pending_text.strip())
+                    s_name, s_loc = parse_store_and_location(pending_text)
                     current_store = _new_store(s_name, s_loc)
                     current_area["Stores"].append(current_store)
                     current_store["Items"].append({"Description": "CUMULATIVE SUMMARY", "Qty": 0, "Free": 0, "Rate": 0.0, "Amount": 0.0, "Percent": 0.0})
@@ -931,11 +1040,8 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
     if cust_match:
         global_cust_name = re.split(r'\s+DL\.?NO|\s+AMBALA|\s+GST', cust_match.group(1).strip(), flags=re.IGNORECASE)[0].strip()
         
-    if "BHARAT ENTERPRISES" in raw_text.upper(): data["AgencyDetails"]["Name"] = "BHARAT ENTERPRISES"
-    elif "ARPIT ENTERPRISES" in raw_text.upper(): data["AgencyDetails"]["Name"] = "ARPIT ENTERPRISES"
-    else:
-        ag_match = re.search(r'W/H\s+([A-Za-z0-9\s&]+?)(?:,|\n)', raw_text, re.IGNORECASE)
-        if ag_match and not data["AgencyDetails"]["Name"]: data["AgencyDetails"]["Name"] = ag_match.group(1).strip()
+    ag_match = re.search(r'W/H\s+([A-Za-z0-9\s&]+?)(?:,|\n)', raw_text, re.IGNORECASE)
+    if ag_match and not data["AgencyDetails"]["Name"]: data["AgencyDetails"]["Name"] = ag_match.group(1).strip()
             
     if report_type == "UNIVERSAL_TWO_COLUMN":
         for area in data["Areas"]:
@@ -959,6 +1065,16 @@ def parse_text(raw_text: str, format_meta: dict = None) -> dict:
                             if len(s_name) > 3 and "AGENCY" not in s_name.upper() and "DISTRIBUTOR" not in s_name.upper():
                                 store["StoreName"] = s_name
                                 break
+    
+    # Generic fallback for any format: use agency details name if store still UNKNOWN
+    for area in data["Areas"]:
+        for store in area["Stores"]:
+            if store["StoreName"] == "UNKNOWN STORE":
+                ag_name = data["AgencyDetails"]["Name"]
+                if ag_name and len(ag_name) > 3 and "AGENCY" not in ag_name.upper() and "DISTRIBUTOR" not in ag_name.upper():
+                    fallback = re.sub(r'\s{2,}', ' ', re.sub(r'[^A-Za-z0-9&\-\s]', ' ', ag_name)).strip()
+                    if len(fallback) > 3:
+                        store["StoreName"] = fallback
     return data
 
 
@@ -1021,6 +1137,12 @@ class ItemWiseParser:
     def extract(self, raw_lines):
         return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
 
+class PartywiseRegisterParser:
+    def __init__(self, format_meta=None):
+        self.format_meta = format_meta
+    def extract(self, raw_lines):
+        return parse_text("\n".join(raw_lines), format_meta=self.format_meta)
+
 class UniversalParser:
     def __init__(self, format_meta=None):
         self.format_meta = format_meta
@@ -1038,8 +1160,6 @@ def parse_marg_party_product_flat(raw_text: str, format_meta: dict) -> dict:
     data = _make_empty_data()
     data["ReportDetails"]["DetectedFormat"] = format_meta.get("Format", "FORMAT_MARG_PPW_FLAT")
     data["ReportDetails"]["ParserMode"]     = "MARG_PARTY_PRODUCT_FLAT"
-    data["ReportDetails"]["Company"]        = "LUPIN"
-
     _header_raw = raw_text[:800]
     _header_lines = [
         ln for ln in _header_raw.split('\n')
@@ -1170,7 +1290,7 @@ def parse_marg_party_product_flat(raw_text: str, format_meta: dict) -> dict:
             amount = round(_marg_flat_clean_num(all_amt3[-1]), 2)
             rate   = 0.0
         else:
-            int_m = re.search(r'\b(\d{2,6})\s*(?:LUPIN|LOP1N)?\s*$', line.strip())
+            int_m = re.search(r'\b(\d{2,6})\s*$', line.strip())
             if int_m:
                 amount = float(int_m.group(1))
                 rate   = 0.0
@@ -1198,10 +1318,7 @@ def parse_marg_party_product_flat(raw_text: str, format_meta: dict) -> dict:
             if re.match(r'^\d+$', fv):
                 free = int(fv)
 
-        company = (
-            'LUPIN' if re.search(r'\b(LUPIN|LOP1N|LOPIN|LUPIM|LUP1N)\b', line, re.I)
-            else ''
-        )
+        company = ''
 
         prod_clean = prod.strip()
         if len(prod_clean) < 3:

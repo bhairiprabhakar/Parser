@@ -37,7 +37,8 @@ def parse_store_and_location(name_str: str) -> tuple:
     
     name_str = re.sub(r'([A-Za-z])(MEDICALS?|PHARMACY|PHARMA|MEDICOS?|AGENCIES|AGENCY|CLINIC|HOSPITAL|DRUGS?|CHEMISTS?)\b', r'\1 \2', name_str, flags=re.IGNORECASE)
     
-    name_str = re.sub(_CORP_SUFFIX_REGEX, '', name_str)
+    while re.search(_CORP_SUFFIX_REGEX + r'\s*$', name_str):
+        name_str = re.sub(_CORP_SUFFIX_REGEX + r'\s*$', '', name_str)
     name_str = re.sub(r'\s{2,}', ' ', name_str).strip()
     
     def clean_loc(loc: str) -> str:

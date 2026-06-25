@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Runtime / auto-generated
+quarantine_vault/
+investigation_dumps/
+format_learned_schemas.json
+*.log
+
+# OS junk
+Thumbs.db
+.DS_Store

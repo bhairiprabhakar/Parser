@@ -37,6 +37,7 @@ def clean_number(val: str, is_int: bool = False):
     val = (val.replace('Cr', '').replace('Dr', '')
               .replace('CR', '').replace('DR', '')
               .replace('(', '-').replace(')', ''))
+    val = re.sub(r'(?<=\d),(?=\d)', '', val)
 
     cleaned = re.sub(r'[^\d.\-]', '', val)
     if cleaned in ('-', '', '.', '-.'): return 0 if is_int else 0.0
@@ -66,7 +67,8 @@ def is_numeric_token(val: str) -> bool:
     val = (val.replace('Cr', '').replace('Dr', '')
               .replace('CR', '').replace('DR', '')
               .replace('(', '-').replace(')', ''))
-              
+    val = re.sub(r'(?<=\d),(?=\d)', '', val)
+               
     cleaned = re.sub(r'[^\d.\-]', '', val)
     if cleaned in ('-', '', '.', '-.'): return False
     

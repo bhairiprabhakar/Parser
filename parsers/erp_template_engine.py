@@ -237,7 +237,6 @@ class AIFormatInferenceEngine:
         alpha_chars   = sum(sum(c.isalpha() for c in l) for l in data_lines)
 
         amt_lines  = sum(1 for l in data_lines if re.search(r'\b\d{2,7}\.\d{2}\b', l))
-        lupin_lines = sum(1 for l in data_lines if re.search(r'\bLUPIN\b', l, re.I))
         gstin_lines = sum(1 for l in data_lines if re.search(
             r'\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d]\b', l))
         date_lines  = sum(1 for l in data_lines if re.search(
@@ -286,7 +285,6 @@ class AIFormatInferenceEngine:
             "digit_ratio":        digit_chars / max(total_chars, 1),
             "alpha_ratio":        alpha_chars / max(total_chars, 1),
             "amt_line_frac":      amt_lines       / n,
-            "lupin_frac":         lupin_lines      / n,
             "gstin_frac":         gstin_lines      / n,
             "date_frac":          date_lines       / n,
             "bill_frac":          bill_lines       / n,
@@ -309,7 +307,6 @@ class AIFormatInferenceEngine:
             return self._unknown(0.0)
 
         drug_heavy    = f.get("drug_line_frac", 0)    > 0.3
-        lupin_heavy   = f.get("lupin_frac", 0)         > 0.3
         amt_dense     = f.get("amt_line_frac", 0)      > 0.6
         wide_table    = f.get("modal_cols", 0)         >= 8
         narrow_tbl    = f.get("modal_cols", 0)         <= 4
@@ -327,23 +324,13 @@ class AIFormatInferenceEngine:
         has_expiry    = f.get("expiry_frac", 0)        > 0.3
         leading_int   = f.get("leading_int_frac", 0)  > 0.5
 
-        if drug_heavy and lupin_heavy and amt_dense and wide_table and stable_cols:
+        if drug_heavy and amt_dense and wide_table and stable_cols:
             return FormatInferenceResult(
                 format_id="MARG_PARTY_PRODUCT_FLAT", erp_name="MARG",
-                confidence=0.92, tier=1,
+                confidence=0.82, tier=1,
                 column_map={"city": 0, "store": "1+2", "product": 3,
                             "packing": 4, "qty": 5, "free": 6,
-                            "rate": 7, "amount": 8, "company": 9},
-                parsing_hints={"multi_col_store": True, "lupin_tag_in_last_col": True},
-                source="structural_classifier",
-            )
-
-        if lupin_heavy and not drug_heavy and narrow_tbl and amt_dense:
-            return FormatInferenceResult(
-                format_id="MARG_PARTY_WISE_SUMMARY", erp_name="MARG",
-                confidence=0.80, tier=1,
-                column_map={"store": 0, "qty": 1, "amount": 2},
-                parsing_hints={"summary_mode": True},
+                            "rate": 7, "amount": 8},
                 source="structural_classifier",
             )
 
@@ -373,7 +360,7 @@ class AIFormatInferenceEngine:
                 source="structural_classifier",
             )
 
-        if has_subtotals and amt_dense and wide_table and not lupin_heavy:
+        if has_subtotals and amt_dense and wide_table:
             conf = 0.82 if has_gstin else 0.74
             return FormatInferenceResult(
                 format_id="BUSY_PARTY_PRODUCT_WISE", erp_name="BUSY",
@@ -489,8 +476,8 @@ class AIFormatInferenceEngine:
     _PROBE_GSTIN       = re.compile(r'\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d]\b')
     _PROBE_HSN         = re.compile(r'^\d{4,8}$')
     _PROBE_DRUG        = re.compile(
-        r'\b(?:HEPP|LUPI|ONECLAV|DEFENAC|BILALUP|REVEAL|CEFP|MEGARICH|'
-        r'PANTOLUP|AZILUP|CIPROVA|LUPICEF|XIMECEF|FLUCALUP|AMOX|CEFO|'
+        r'\b(?:HEPP|ONECLAV|DEFENAC|REVEAL|CEFP|MEGARICH|'
+        r'CIPROVA|XIMECEF|AMOX|CEFO|'
         r'METFO|ATORV|AZITHRO|PANTO|OMEP|CETIRIZ|PARACET|IBUPROF)\w*', re.I)
     _PROBE_PACKING     = re.compile(
         r'\b\d{1,3}\s*[*xX]\s*\d+\b|\b\d+\s*(?:ML|MG|GM|TAB|CAP|SYP|INJ)\b', re.I)
@@ -656,7 +643,7 @@ class AIFormatInferenceEngine:
                                if col_map.get(f, -1) >= 0)
         confidence = 0.40 + key_fields_found * 0.10
 
-        erp_guess  = "MARG" if features.get("lupin_frac", 0) > 0.1 else "GENERIC"
+        erp_guess  = "MARG" if features.get("drug_line_frac", 0) > 0.1 else "GENERIC"
         fmt_id     = f"{erp_guess}_AUTO_{modal_n}COL"
 
         return FormatInferenceResult(
@@ -766,9 +753,8 @@ class AIFormatInferenceEngine:
     def _cache_key(features: dict) -> str:
         modal = features.get("modal_cols", 0)
         drug  = "Y" if features.get("drug_line_frac", 0) > 0.2 else "N"
-        lupin = "Y" if features.get("lupin_frac", 0) > 0.2 else "N"
         amt   = "Y" if features.get("amt_line_frac", 0) > 0.5 else "N"
-        return f"cols{modal}_drug{drug}_lup{lupin}_amt{amt}"
+        return f"cols{modal}_drug{drug}_amt{amt}"
 
     @staticmethod
     def _cache_key_from_result(result: FormatInferenceResult) -> str:

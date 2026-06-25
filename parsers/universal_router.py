@@ -136,6 +136,8 @@ def _legacy_report_type_from_header(spaced: str, compact: str) -> tuple:
     report_type = "UNIVERSAL_TWO_COLUMN"
     reason = "fallback universal two-column parser"
 
+    if any(kw in head_text_clean for kw in ["GST INVOICE", "TAX INVOICE", "INVOICE NO"]) or ("SGST" in head_text_clean and "CGST" in head_text_clean and "HSN" in head_text_clean):
+        return ("INVOICE_SINGLE_PARTY", "invoice keywords (before quarterly check)")
     if any(kw in head_text_clean for kw in ["QUARTERLY", "QTR", "Q1", "Q2", "Q3", "Q4", "AMT OCT", "AMT NOV", "AMT DEC"]) or \
        _has_quarter_or_months(head_text_clean):
         return ("QUARTERLY_SUMMARY", "quarter/month keywords")
@@ -310,18 +312,16 @@ def detect_report_format(lines: list) -> dict:
 
     # ── MARG Party & Product Wise flat-table fingerprint ─────────────────────
     _marg_flat_drug_re = re.compile(
-        r'\b(?:HEPP\s*FORT|LUPISULIDE|LUPICEF|LUPIZYME|LUPISERA|LUPICREPE|LUPIDINE|LUPIPORE|'
-        r'ONECLAV|DEFENAC|BILALUP|REVEAL|CEFPOLUP|CEEPOLUP|MEGARICH|PANTOLUP|AZILUP|CIPROVA|'
-        r'XIMECEF|FLUCALUP|SOLUBET|MULTIRICH|CANAZOLE|PILES\s*CURE|CEFFOREN)\w*', re.I
+        r'\b(?:HEPP\s*FORT|ONECLAV|DEFENAC|REVEAL|MEGARICH|CIPROVA|'
+        r'XIMECEF|SOLUBET|MULTIRICH|CANAZOLE|PILES\s*CURE|CEFFOREN)\w*', re.I
     )
     _marg_flat_hits = 0
     for _fl in lines[:20]:
         _fp = _fl.split('\t')
         if len(_fp) >= 8:
             _has_drug = bool(_marg_flat_drug_re.search(_fp[3] if len(_fp) > 3 else ''))
-            _has_lupin = bool(re.search(r'\b(LUPIN|LOP1N)\b', _fp[-1], re.I))
             _has_amt   = bool(re.search(r'\d{2,}\.\d{2}', _fl))
-            if (_has_drug or _has_lupin) and _has_amt:
+            if _has_drug and _has_amt:
                 _marg_flat_hits += 1
     if _marg_flat_hits >= 3:
         return found("FORMAT_MARG_PPW_FLAT", "MARG_PARTY_PRODUCT_FLAT",
@@ -331,7 +331,7 @@ def detect_report_format(lines: list) -> dict:
     if _AI_AVAILABLE:
         _ai_lines = lines[:40]
         _ai_result = _ai_format_inference.infer(_ai_lines, "\n".join(lines))
-        if _ai_result.confidence >= 0.65 and _ai_result.format_id not in ("UNKNOWN", "GENERIC_TABULAR"):
+        if _ai_result.confidence >= 0.65 and _ai_result.format_id not in ("UNKNOWN", "GENERIC_TABULAR") and not _ai_result.format_id.startswith("GENERIC_AUTO"):
             logger.info("AI Format Inference: %s / %s  conf=%.2f  tier=%d  source=%s",
                         _ai_result.erp_name, _ai_result.format_id,
                         _ai_result.confidence, _ai_result.tier, _ai_result.source)

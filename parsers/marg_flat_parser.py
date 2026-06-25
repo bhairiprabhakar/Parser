@@ -60,11 +60,6 @@ _MARG_FLAT_AMT3_RE = re.compile(r'\b\d{1,7}\.\d{3}\b')
 
 
 def _marg_flat_fix_ocr(line: str) -> str:
-    line = re.sub(r'(\d+\.\d{2})(LOP1N|LOPIN|LUP1N|LUPIM)', r'\1\tLUPIN', line, flags=re.I)
-    line = re.sub(r'\bLOP1N\b', 'LUPIN', line, flags=re.I)
-    line = re.sub(r'\bLUP1N\b', 'LUPIN', line, flags=re.I)
-    line = re.sub(r'\bLOPIN\b', 'LUPIN', line, flags=re.I)
-    line = re.sub(r'\bLUPIM\b', 'LUPIN', line, flags=re.I)
     line = re.sub(r'(?<=\d)B(?=\d)', '8', line)
     line = re.sub(r'^B(?=\d)', '8', line)
     line = re.sub(r'(\d+\.)O(\d+)', r'\g<1>0\2', line)

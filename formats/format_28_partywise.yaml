@@ -1,0 +1,13 @@
+format_id: "FORMAT_28_PARTYWISE"
+report_type: "PARTYWISE_SALE_REGISTER"
+parser_module: "parsers.legacy_machine"
+parser_class: "PartywiseRegisterParser"
+
+fingerprint_keywords:
+  require_all:
+    - "DATE"
+    - "BILL REF"
+    - "PRODUCT"
+    - "PACK"
+    - "QTY FREE"
+    - "AMOUNT"
